@@ -5585,91 +5585,6 @@ static int nl80211_set_rekey_data(struct sk_buff *skb, struct genl_info *info)
 	return err;
 }
 
-static int nl80211_register_unexpected_frame(struct sk_buff *skb,
-					     struct genl_info *info)
-{
-	struct net_device *dev = info->user_ptr[1];
-	struct wireless_dev *wdev = dev->ieee80211_ptr;
-
-	if (wdev->iftype != NL80211_IFTYPE_AP &&
-	    wdev->iftype != NL80211_IFTYPE_P2P_GO)
-		return -EINVAL;
-
-	if (wdev->ap_unexpected_nlpid)
-		return -EBUSY;
-
-	wdev->ap_unexpected_nlpid = info->snd_pid;
-	return 0;
-}
-
-static int nl80211_probe_client(struct sk_buff *skb,
-				struct genl_info *info)
-{
-	struct cfg80211_registered_device *rdev = info->user_ptr[0];
-	struct net_device *dev = info->user_ptr[1];
-	struct wireless_dev *wdev = dev->ieee80211_ptr;
-	struct sk_buff *msg;
-	void *hdr;
-	const u8 *addr;
-	u64 cookie;
-	int err;
-
-	if (wdev->iftype != NL80211_IFTYPE_AP &&
-	    wdev->iftype != NL80211_IFTYPE_P2P_GO)
-		return -EOPNOTSUPP;
-
-	if (!info->attrs[NL80211_ATTR_MAC])
-		return -EINVAL;
-
-	if (!rdev->ops->probe_client)
-		return -EOPNOTSUPP;
-
-	msg = nlmsg_new(NLMSG_DEFAULT_SIZE, GFP_KERNEL);
-	if (!msg)
-		return -ENOMEM;
-
-	hdr = nl80211hdr_put(msg, info->snd_pid, info->snd_seq, 0,
-			     NL80211_CMD_PROBE_CLIENT);
-
-	if (IS_ERR(hdr)) {
-		err = PTR_ERR(hdr);
-		goto free_msg;
-	}
-
-	addr = nla_data(info->attrs[NL80211_ATTR_MAC]);
-
-	err = rdev->ops->probe_client(&rdev->wiphy, dev, addr, &cookie);
-	if (err)
-		goto free_msg;
-
-	NLA_PUT_U64(msg, NL80211_ATTR_COOKIE, cookie);
-
-	genlmsg_end(msg, hdr);
-
-	return genlmsg_reply(msg, info);
-
- nla_put_failure:
-	err = -ENOBUFS;
- free_msg:
-	nlmsg_free(msg);
-	return err;
-}
-
-static int nl80211_register_beacons(struct sk_buff *skb, struct genl_info *info)
-{
-	struct cfg80211_registered_device *rdev = info->user_ptr[0];
-
-	if (!(rdev->wiphy.flags & WIPHY_FLAG_REPORTS_OBSS))
-		return -EOPNOTSUPP;
-
-	if (rdev->ap_beacons_nlpid)
-		return -EBUSY;
-
-	rdev->ap_beacons_nlpid = info->snd_pid;
-
-	return 0;
-}
-
 #define NL80211_FLAG_NEED_WIPHY		0x01
 #define NL80211_FLAG_NEED_NETDEV	0x02
 #define NL80211_FLAG_NEED_RTNL		0x04
@@ -6206,46 +6121,6 @@ static struct genl_ops nl80211_ops[] = {
 		.policy = nl80211_policy,
 		.flags = GENL_ADMIN_PERM,
 		.internal_flags = NL80211_FLAG_NEED_NETDEV_UP |
-				  NL80211_FLAG_NEED_RTNL,
-	},
-	{
-		.cmd = NL80211_CMD_TDLS_MGMT,
-		.doit = nl80211_tdls_mgmt,
-		.policy = nl80211_policy,
-		.flags = GENL_ADMIN_PERM,
-		.internal_flags = NL80211_FLAG_NEED_NETDEV_UP |
-				  NL80211_FLAG_NEED_RTNL,
-	},
-	{
-		.cmd = NL80211_CMD_TDLS_OPER,
-		.doit = nl80211_tdls_oper,
-		.policy = nl80211_policy,
-		.flags = GENL_ADMIN_PERM,
-		.internal_flags = NL80211_FLAG_NEED_NETDEV_UP |
-				  NL80211_FLAG_NEED_RTNL,
-	},
-	{
-		.cmd = NL80211_CMD_UNEXPECTED_FRAME,
-		.doit = nl80211_register_unexpected_frame,
-		.policy = nl80211_policy,
-		.flags = GENL_ADMIN_PERM,
-		.internal_flags = NL80211_FLAG_NEED_NETDEV |
-				  NL80211_FLAG_NEED_RTNL,
-	},
-	{
-		.cmd = NL80211_CMD_PROBE_CLIENT,
-		.doit = nl80211_probe_client,
-		.policy = nl80211_policy,
-		.flags = GENL_ADMIN_PERM,
-		.internal_flags = NL80211_FLAG_NEED_NETDEV |
-				  NL80211_FLAG_NEED_RTNL,
-	},
-	{
-		.cmd = NL80211_CMD_REGISTER_BEACONS,
-		.doit = nl80211_register_beacons,
-		.policy = nl80211_policy,
-		.flags = GENL_ADMIN_PERM,
-		.internal_flags = NL80211_FLAG_NEED_WIPHY |
 				  NL80211_FLAG_NEED_RTNL,
 	},
 };
@@ -7263,52 +7138,6 @@ void nl80211_gtk_rekey_notify(struct cfg80211_registered_device *rdev,
 		NL80211_REPLAY_CTR_LEN, replay_ctr);
 
 	nla_nest_end(msg, rekey_attr);
-
-	if (genlmsg_end(msg, hdr) < 0) {
-		nlmsg_free(msg);
-		return;
-	}
-
-	genlmsg_multicast_netns(wiphy_net(&rdev->wiphy), msg, 0,
-				nl80211_mlme_mcgrp.id, gfp);
-	return;
-
- nla_put_failure:
-	genlmsg_cancel(msg, hdr);
-	nlmsg_free(msg);
-}
-
-void nl80211_pmksa_candidate_notify(struct cfg80211_registered_device *rdev,
-				    struct net_device *netdev, int index,
-				    const u8 *bssid, bool preauth, gfp_t gfp)
-{
-	struct sk_buff *msg;
-	struct nlattr *attr;
-	void *hdr;
-
-	msg = nlmsg_new(NLMSG_GOODSIZE, gfp);
-	if (!msg)
-		return;
-
-	hdr = nl80211hdr_put(msg, 0, 0, 0, NL80211_CMD_PMKSA_CANDIDATE);
-	if (!hdr) {
-		nlmsg_free(msg);
-		return;
-	}
-
-	NLA_PUT_U32(msg, NL80211_ATTR_WIPHY, rdev->wiphy_idx);
-	NLA_PUT_U32(msg, NL80211_ATTR_IFINDEX, netdev->ifindex);
-
-	attr = nla_nest_start(msg, NL80211_ATTR_PMKSA_CANDIDATE);
-	if (!attr)
-		goto nla_put_failure;
-
-	NLA_PUT_U32(msg, NL80211_PMKSA_CANDIDATE_INDEX, index);
-	NLA_PUT(msg, NL80211_PMKSA_CANDIDATE_BSSID, ETH_ALEN, bssid);
-	if (preauth)
-		NLA_PUT_FLAG(msg, NL80211_PMKSA_CANDIDATE_PREAUTH);
-
-	nla_nest_end(msg, attr);
 
 	if (genlmsg_end(msg, hdr) < 0) {
 		nlmsg_free(msg);
