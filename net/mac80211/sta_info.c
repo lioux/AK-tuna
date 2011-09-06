@@ -695,14 +695,13 @@ void sta_info_clear_tim_bit(struct sta_info *sta)
 	spin_unlock_irqrestore(&sta->local->sta_lock, flags);
 }
 
-static int sta_info_buffer_expired(struct sta_info *sta,
-				   struct sk_buff *skb)
+static bool sta_info_buffer_expired(struct sta_info *sta, struct sk_buff *skb)
 {
 	struct ieee80211_tx_info *info;
 	int timeout;
 
 	if (!skb)
-		return 0;
+		return false;
 
 	info = IEEE80211_SKB_CB(skb);
 
@@ -721,9 +720,6 @@ static bool sta_info_cleanup_expire_buffered(struct ieee80211_local *local,
 {
 	unsigned long flags;
 	struct sk_buff *skb;
-
-	if (skb_queue_empty(&sta->ps_tx_buf))
-		return false;
 
 	for (;;) {
 		spin_lock_irqsave(&sta->ps_tx_buf.lock, flags);
@@ -749,7 +745,7 @@ static bool sta_info_cleanup_expire_buffered(struct ieee80211_local *local,
 			sta_info_clear_tim_bit(sta);
 	}
 
-	return true;
+	return !skb_queue_empty(&sta->ps_tx_buf);
 }
 
 static int __must_check __sta_info_destroy(struct sta_info *sta)
