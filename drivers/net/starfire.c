@@ -639,7 +639,7 @@ static const struct net_device_ops netdev_ops = {
 	.ndo_start_xmit		= start_tx,
 	.ndo_tx_timeout		= tx_timeout,
 	.ndo_get_stats		= get_stats,
-	.ndo_set_multicast_list = &set_rx_mode,
+	.ndo_set_rx_mode	= set_rx_mode,
 	.ndo_do_ioctl		= netdev_ioctl,
 	.ndo_change_mtu		= eth_change_mtu,
 	.ndo_set_mac_address	= eth_mac_addr,
@@ -1256,10 +1256,13 @@ static netdev_tx_t start_tx(struct sk_buff *skb, struct net_device *dev)
 			np->tx_info[entry].mapping =
 				pci_map_single(np->pci_dev, skb->data, skb_first_frag_len(skb), PCI_DMA_TODEVICE);
 		} else {
-			skb_frag_t *this_frag = &skb_shinfo(skb)->frags[i - 1];
-			status |= this_frag->size;
+			const skb_frag_t *this_frag = &skb_shinfo(skb)->frags[i - 1];
+			status |= skb_frag_size(this_frag);
 			np->tx_info[entry].mapping =
-				pci_map_single(np->pci_dev, page_address(this_frag->page) + this_frag->page_offset, this_frag->size, PCI_DMA_TODEVICE);
+				pci_map_single(np->pci_dev,
+					       skb_frag_address(this_frag),
+					       skb_frag_size(this_frag),
+					       PCI_DMA_TODEVICE);
 		}
 
 		np->tx_ring[entry].addr = cpu_to_dma(np->tx_info[entry].mapping);
@@ -1375,7 +1378,7 @@ static irqreturn_t intr_handler(int irq, void *dev_instance)
 					for (i = 0; i < skb_shinfo(skb)->nr_frags; i++) {
 						pci_unmap_single(np->pci_dev,
 								 np->tx_info[entry].mapping,
-								 skb_shinfo(skb)->frags[i].size,
+								 skb_frag_size(&skb_shinfo(skb)->frags[i]),
 								 PCI_DMA_TODEVICE);
 						np->dirty_tx++;
 						entry++;

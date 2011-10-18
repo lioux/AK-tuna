@@ -61,10 +61,7 @@ static int rq1_entries = EHEA_DEF_ENTRIES_RQ1;
 static int rq2_entries = EHEA_DEF_ENTRIES_RQ2;
 static int rq3_entries = EHEA_DEF_ENTRIES_RQ3;
 static int sq_entries = EHEA_DEF_ENTRIES_SQ;
-static int use_mcs;
-static int use_lro;
-static int lro_max_aggr = EHEA_LRO_MAX_AGGR;
-static int num_tx_qps = EHEA_NUM_TX_QP;
+static int use_mcs = 1;
 static int prop_carrier_state;
 
 module_param(msg_level, int, 0);
@@ -74,11 +71,7 @@ module_param(rq3_entries, int, 0);
 module_param(sq_entries, int, 0);
 module_param(prop_carrier_state, int, 0);
 module_param(use_mcs, int, 0);
-module_param(use_lro, int, 0);
-module_param(lro_max_aggr, int, 0);
-module_param(num_tx_qps, int, 0);
 
-MODULE_PARM_DESC(num_tx_qps, "Number of TX-QPS");
 MODULE_PARM_DESC(msg_level, "msg_level");
 MODULE_PARM_DESC(prop_carrier_state, "Propagate carrier state of physical "
 		 "port to stack. 1:yes, 0:no.  Default = 0 ");
@@ -94,12 +87,8 @@ MODULE_PARM_DESC(rq1_entries, "Number of entries for Receive Queue 1 "
 MODULE_PARM_DESC(sq_entries, " Number of entries for the Send Queue  "
 		 "[2^x - 1], x = [6..14]. Default = "
 		 __MODULE_STRING(EHEA_DEF_ENTRIES_SQ) ")");
-MODULE_PARM_DESC(use_mcs, " 0:NAPI, 1:Multiple receive queues, Default = 0 ");
-
-MODULE_PARM_DESC(lro_max_aggr, " LRO: Max packets to be aggregated. Default = "
-		 __MODULE_STRING(EHEA_LRO_MAX_AGGR));
-MODULE_PARM_DESC(use_lro, " Large Receive Offload, 1: enable, 0: disable, "
-		 "Default = 0");
+MODULE_PARM_DESC(use_mcs, " Multiple receive queues, 1: enable, 0: disable, "
+		 "Default = 1");
 
 static int port_name_cnt;
 static LIST_HEAD(adapter_list);
@@ -173,7 +162,7 @@ static void ehea_update_firmware_handles(void)
 				continue;
 
 			num_ports++;
-			num_portres += port->num_def_qps + port->num_add_tx_qps;
+			num_portres += port->num_def_qps;
 		}
 	}
 
@@ -199,9 +188,7 @@ static void ehea_update_firmware_handles(void)
 			    (num_ports == 0))
 				continue;
 
-			for (l = 0;
-			     l < port->num_def_qps + port->num_add_tx_qps;
-			     l++) {
+			for (l = 0; l < port->num_def_qps; l++) {
 				struct ehea_port_res *pr = &port->port_res[l];
 
 				arr[i].adh = adapter->handle;
@@ -327,20 +314,44 @@ out:
 	spin_unlock_irqrestore(&ehea_bcmc_regs.lock, flags);
 }
 
-static struct net_device_stats *ehea_get_stats(struct net_device *dev)
+static struct rtnl_link_stats64 *ehea_get_stats64(struct net_device *dev,
+					struct rtnl_link_stats64 *stats)
 {
 	struct ehea_port *port = netdev_priv(dev);
-	struct net_device_stats *stats = &port->stats;
-	struct hcp_ehea_port_cb2 *cb2;
-	u64 hret, rx_packets, tx_packets, rx_bytes = 0, tx_bytes = 0;
+	u64 rx_packets = 0, tx_packets = 0, rx_bytes = 0, tx_bytes = 0;
 	int i;
 
-	memset(stats, 0, sizeof(*stats));
+	for (i = 0; i < port->num_def_qps; i++) {
+		rx_packets += port->port_res[i].rx_packets;
+		rx_bytes   += port->port_res[i].rx_bytes;
+	}
+
+	for (i = 0; i < port->num_def_qps; i++) {
+		tx_packets += port->port_res[i].tx_packets;
+		tx_bytes   += port->port_res[i].tx_bytes;
+	}
+
+	stats->tx_packets = tx_packets;
+	stats->rx_bytes = rx_bytes;
+	stats->tx_bytes = tx_bytes;
+	stats->rx_packets = rx_packets;
+
+	return &port->stats;
+}
+
+static void ehea_update_stats(struct work_struct *work)
+{
+	struct ehea_port *port =
+		container_of(work, struct ehea_port, stats_work.work);
+	struct net_device *dev = port->netdev;
+	struct rtnl_link_stats64 *stats = &port->stats;
+	struct hcp_ehea_port_cb2 *cb2;
+	u64 hret;
 
 	cb2 = (void *)get_zeroed_page(GFP_KERNEL);
 	if (!cb2) {
-		netdev_err(dev, "no mem for cb2\n");
-		goto out;
+		netdev_err(dev, "No mem for cb2. Some interface statistics were not updated\n");
+		goto resched;
 	}
 
 	hret = ehea_h_query_ehea_port(port->adapter->handle,
@@ -354,29 +365,13 @@ static struct net_device_stats *ehea_get_stats(struct net_device *dev)
 	if (netif_msg_hw(port))
 		ehea_dump(cb2, sizeof(*cb2), "net_device_stats");
 
-	rx_packets = 0;
-	for (i = 0; i < port->num_def_qps; i++) {
-		rx_packets += port->port_res[i].rx_packets;
-		rx_bytes   += port->port_res[i].rx_bytes;
-	}
-
-	tx_packets = 0;
-	for (i = 0; i < port->num_def_qps + port->num_add_tx_qps; i++) {
-		tx_packets += port->port_res[i].tx_packets;
-		tx_bytes   += port->port_res[i].tx_bytes;
-	}
-
-	stats->tx_packets = tx_packets;
 	stats->multicast = cb2->rxmcp;
 	stats->rx_errors = cb2->rxuerr;
-	stats->rx_bytes = rx_bytes;
-	stats->tx_bytes = tx_bytes;
-	stats->rx_packets = rx_packets;
 
 out_herr:
 	free_page((unsigned long)cb2);
-out:
-	return stats;
+resched:
+	schedule_delayed_work(&port->stats_work, msecs_to_jiffies(1000));
 }
 
 static void ehea_refill_rq1(struct ehea_port_res *pr, int index, int nr_of_wqes)
@@ -543,7 +538,8 @@ static inline int ehea_check_cqe(struct ehea_cqe *cqe, int *rq_num)
 }
 
 static inline void ehea_fill_skb(struct net_device *dev,
-				 struct sk_buff *skb, struct ehea_cqe *cqe)
+				 struct sk_buff *skb, struct ehea_cqe *cqe,
+				 struct ehea_port_res *pr)
 {
 	int length = cqe->num_bytes_transfered - 4;	/*remove CRC */
 
@@ -557,6 +553,8 @@ static inline void ehea_fill_skb(struct net_device *dev,
 		skb->csum = csum_unfold(~cqe->inet_checksum_value);
 	} else
 		skb->ip_summed = CHECKSUM_UNNECESSARY;
+
+	skb_record_rx_queue(skb, pr - &pr->port->port_res[0]);
 }
 
 static inline struct sk_buff *get_skb_by_index(struct sk_buff **skb_array,
@@ -649,49 +647,6 @@ static int ehea_treat_poll_error(struct ehea_port_res *pr, int rq,
 	return 0;
 }
 
-static int get_skb_hdr(struct sk_buff *skb, void **iphdr,
-		       void **tcph, u64 *hdr_flags, void *priv)
-{
-	struct ehea_cqe *cqe = priv;
-	unsigned int ip_len;
-	struct iphdr *iph;
-
-	/* non tcp/udp packets */
-	if (!cqe->header_length)
-		return -1;
-
-	/* non tcp packet */
-	skb_reset_network_header(skb);
-	iph = ip_hdr(skb);
-	if (iph->protocol != IPPROTO_TCP)
-		return -1;
-
-	ip_len = ip_hdrlen(skb);
-	skb_set_transport_header(skb, ip_len);
-	*tcph = tcp_hdr(skb);
-
-	/* check if ip header and tcp header are complete */
-	if (ntohs(iph->tot_len) < ip_len + tcp_hdrlen(skb))
-		return -1;
-
-	*hdr_flags = LRO_IPV4 | LRO_TCP;
-	*iphdr = iph;
-
-	return 0;
-}
-
-static void ehea_proc_skb(struct ehea_port_res *pr, struct ehea_cqe *cqe,
-			  struct sk_buff *skb)
-{
-	if (cqe->status & EHEA_CQE_VLAN_TAG_XTRACT)
-		__vlan_hwaccel_put_tag(skb, cqe->vlan_tag);
-
-	if (skb->dev->features & NETIF_F_LRO)
-		lro_receive_skb(&pr->lro_mgr, skb, cqe);
-	else
-		netif_receive_skb(skb);
-}
-
 static int ehea_proc_rwqes(struct net_device *dev,
 			   struct ehea_port_res *pr,
 			   int budget)
@@ -742,7 +697,7 @@ static int ehea_proc_rwqes(struct net_device *dev,
 				}
 				skb_copy_to_linear_data(skb, ((char *)cqe) + 64,
 						 cqe->num_bytes_transfered - 4);
-				ehea_fill_skb(dev, skb, cqe);
+				ehea_fill_skb(dev, skb, cqe, pr);
 			} else if (rq == 2) {
 				/* RQ2 */
 				skb = get_skb_by_index(skb_arr_rq2,
@@ -752,7 +707,7 @@ static int ehea_proc_rwqes(struct net_device *dev,
 						  "rq2: skb=NULL\n");
 					break;
 				}
-				ehea_fill_skb(dev, skb, cqe);
+				ehea_fill_skb(dev, skb, cqe, pr);
 				processed_rq2++;
 			} else {
 				/* RQ3 */
@@ -763,12 +718,16 @@ static int ehea_proc_rwqes(struct net_device *dev,
 						  "rq3: skb=NULL\n");
 					break;
 				}
-				ehea_fill_skb(dev, skb, cqe);
+				ehea_fill_skb(dev, skb, cqe, pr);
 				processed_rq3++;
 			}
 
 			processed_bytes += skb->len;
-			ehea_proc_skb(pr, cqe, skb);
+
+			if (cqe->status & EHEA_CQE_VLAN_TAG_XTRACT)
+				__vlan_hwaccel_put_tag(skb, cqe->vlan_tag);
+
+			napi_gro_receive(&pr->napi, skb);
 		} else {
 			pr->p_stats.poll_receive_errors++;
 			port_reset = ehea_treat_poll_error(pr, rq, cqe,
@@ -779,8 +738,6 @@ static int ehea_proc_rwqes(struct net_device *dev,
 		}
 		cqe = ehea_poll_rq1(qp, &wqe_index);
 	}
-	if (dev->features & NETIF_F_LRO)
-		lro_flush_all(&pr->lro_mgr);
 
 	pr->rx_packets += processed;
 	pr->rx_bytes += processed_bytes;
@@ -798,7 +755,7 @@ static void reset_sq_restart_flag(struct ehea_port *port)
 {
 	int i;
 
-	for (i = 0; i < port->num_def_qps + port->num_add_tx_qps; i++) {
+	for (i = 0; i < port->num_def_qps; i++) {
 		struct ehea_port_res *pr = &port->port_res[i];
 		pr->sq_restart_flag = 0;
 	}
@@ -811,7 +768,7 @@ static void check_sqs(struct ehea_port *port)
 	int swqe_index;
 	int i, k;
 
-	for (i = 0; i < port->num_def_qps + port->num_add_tx_qps; i++) {
+	for (i = 0; i < port->num_def_qps; i++) {
 		struct ehea_port_res *pr = &port->port_res[i];
 		int ret;
 		k = 0;
@@ -849,7 +806,8 @@ static struct ehea_cqe *ehea_proc_cqes(struct ehea_port_res *pr, int my_quota)
 	int cqe_counter = 0;
 	int swqe_av = 0;
 	int index;
-	unsigned long flags;
+	struct netdev_queue *txq = netdev_get_tx_queue(pr->port->netdev,
+						pr - &pr->port->port_res[0]);
 
 	cqe = ehea_poll_cq(send_cq);
 	while (cqe && (quota > 0)) {
@@ -899,20 +857,20 @@ static struct ehea_cqe *ehea_proc_cqes(struct ehea_port_res *pr, int my_quota)
 	ehea_update_feca(send_cq, cqe_counter);
 	atomic_add(swqe_av, &pr->swqe_avail);
 
-	spin_lock_irqsave(&pr->netif_queue, flags);
-
-	if (pr->queue_stopped && (atomic_read(&pr->swqe_avail)
-				  >= pr->swqe_refill_th)) {
-		netif_wake_queue(pr->port->netdev);
-		pr->queue_stopped = 0;
+	if (unlikely(netif_tx_queue_stopped(txq) &&
+		     (atomic_read(&pr->swqe_avail) >= pr->swqe_refill_th))) {
+		__netif_tx_lock(txq, smp_processor_id());
+		if (netif_tx_queue_stopped(txq) &&
+		    (atomic_read(&pr->swqe_avail) >= pr->swqe_refill_th))
+			netif_tx_wake_queue(txq);
+		__netif_tx_unlock(txq);
 	}
-	spin_unlock_irqrestore(&pr->netif_queue, flags);
+
 	wake_up(&pr->port->swqe_avail_wq);
 
 	return cqe;
 }
 
-#define EHEA_NAPI_POLL_NUM_BEFORE_IRQ 16
 #define EHEA_POLL_MAX_CQES 65535
 
 static int ehea_poll(struct napi_struct *napi, int budget)
@@ -922,18 +880,13 @@ static int ehea_poll(struct napi_struct *napi, int budget)
 	struct net_device *dev = pr->port->netdev;
 	struct ehea_cqe *cqe;
 	struct ehea_cqe *cqe_skb = NULL;
-	int force_irq, wqe_index;
+	int wqe_index;
 	int rx = 0;
 
-	force_irq = (pr->poll_counter > EHEA_NAPI_POLL_NUM_BEFORE_IRQ);
 	cqe_skb = ehea_proc_cqes(pr, EHEA_POLL_MAX_CQES);
+	rx += ehea_proc_rwqes(dev, pr, budget - rx);
 
-	if (!force_irq)
-		rx += ehea_proc_rwqes(dev, pr, budget - rx);
-
-	while ((rx != budget) || force_irq) {
-		pr->poll_counter = 0;
-		force_irq = 0;
+	while (rx != budget) {
 		napi_complete(napi);
 		ehea_reset_cq_ep(pr->recv_cq);
 		ehea_reset_cq_ep(pr->send_cq);
@@ -953,7 +906,6 @@ static int ehea_poll(struct napi_struct *napi, int budget)
 		rx += ehea_proc_rwqes(dev, pr, budget - rx);
 	}
 
-	pr->poll_counter++;
 	return rx;
 }
 
@@ -1105,13 +1057,6 @@ int ehea_sense_port_attr(struct ehea_port *port)
 		goto out_free;
 	}
 
-	port->num_tx_qps = num_tx_qps;
-
-	if (port->num_def_qps >= port->num_tx_qps)
-		port->num_add_tx_qps = 0;
-	else
-		port->num_add_tx_qps = port->num_tx_qps - port->num_def_qps;
-
 	ret = 0;
 out_free:
 	if (ret || netif_msg_probe(port))
@@ -1243,7 +1188,7 @@ static void ehea_parse_eqe(struct ehea_adapter *adapter, u64 eqe)
 				netif_info(port, link, dev,
 					   "Logical port down\n");
 				netif_carrier_off(dev);
-				netif_stop_queue(dev);
+				netif_tx_disable(dev);
 			}
 
 		if (EHEA_BMASK_GET(NEQE_EXTSWITCH_PORT_UP, eqe)) {
@@ -1274,7 +1219,7 @@ static void ehea_parse_eqe(struct ehea_adapter *adapter, u64 eqe)
 	case EHEA_EC_PORT_MALFUNC:
 		netdev_info(dev, "Port malfunction\n");
 		netif_carrier_off(dev);
-		netif_stop_queue(dev);
+		netif_tx_disable(dev);
 		break;
 	default:
 		netdev_err(dev, "unknown event code %x, eqe=0x%llX\n", ec, eqe);
@@ -1352,7 +1297,7 @@ static int ehea_reg_interrupts(struct net_device *dev)
 		   port->qp_eq->attr.ist1);
 
 
-	for (i = 0; i < port->num_def_qps + port->num_add_tx_qps; i++) {
+	for (i = 0; i < port->num_def_qps; i++) {
 		pr = &port->port_res[i];
 		snprintf(pr->int_send_name, EHEA_IRQ_NAME_SIZE - 1,
 			 "%s-queue%d", dev->name, i);
@@ -1395,7 +1340,7 @@ static void ehea_free_interrupts(struct net_device *dev)
 
 	/* send */
 
-	for (i = 0; i < port->num_def_qps + port->num_add_tx_qps; i++) {
+	for (i = 0; i < port->num_def_qps; i++) {
 		pr = &port->port_res[i];
 		ibmebus_free_irq(pr->eq->attr.ist1, pr);
 		netif_info(port, intr, dev,
@@ -1526,8 +1471,6 @@ static int ehea_init_port_res(struct ehea_port *port, struct ehea_port_res *pr,
 	pr->rx_packets = rx_packets;
 
 	pr->port = port;
-	spin_lock_init(&pr->xmit_lock);
-	spin_lock_init(&pr->netif_queue);
 
 	pr->eq = ehea_create_eq(adapter, eq_type, EHEA_MAX_ENTRIES_EQ, 0);
 	if (!pr->eq) {
@@ -1618,15 +1561,6 @@ static int ehea_init_port_res(struct ehea_port *port, struct ehea_port_res *pr,
 
 	netif_napi_add(pr->port->netdev, &pr->napi, ehea_poll, 64);
 
-	pr->lro_mgr.max_aggr = pr->port->lro_max_aggr;
-	pr->lro_mgr.max_desc = MAX_LRO_DESCRIPTORS;
-	pr->lro_mgr.lro_arr = pr->lro_desc;
-	pr->lro_mgr.get_skb_header = get_skb_hdr;
-	pr->lro_mgr.features = LRO_F_NAPI | LRO_F_EXTRACT_VLAN_ID;
-	pr->lro_mgr.dev = port->netdev;
-	pr->lro_mgr.ip_summed = CHECKSUM_UNNECESSARY;
-	pr->lro_mgr.ip_summed_aggr = CHECKSUM_UNNECESSARY;
-
 	ret = 0;
 	goto out;
 
@@ -1683,96 +1617,35 @@ static int ehea_clean_portres(struct ehea_port *port, struct ehea_port_res *pr)
 	return ret;
 }
 
-/*
- * The write_* functions store information in swqe which is used by
- * the hardware to calculate the ip/tcp/udp checksum
- */
-
-static inline void write_ip_start_end(struct ehea_swqe *swqe,
-				      const struct sk_buff *skb)
-{
-	swqe->ip_start = skb_network_offset(skb);
-	swqe->ip_end = (u8)(swqe->ip_start + ip_hdrlen(skb) - 1);
-}
-
-static inline void write_tcp_offset_end(struct ehea_swqe *swqe,
-					const struct sk_buff *skb)
-{
-	swqe->tcp_offset =
-		(u8)(swqe->ip_end + 1 + offsetof(struct tcphdr, check));
-
-	swqe->tcp_end = (u16)skb->len - 1;
-}
-
-static inline void write_udp_offset_end(struct ehea_swqe *swqe,
-					const struct sk_buff *skb)
-{
-	swqe->tcp_offset =
-		(u8)(swqe->ip_end + 1 + offsetof(struct udphdr, check));
-
-	swqe->tcp_end = (u16)skb->len - 1;
-}
-
-
-static void write_swqe2_TSO(struct sk_buff *skb,
-			    struct ehea_swqe *swqe, u32 lkey)
-{
-	struct ehea_vsgentry *sg1entry = &swqe->u.immdata_desc.sg_entry;
-	u8 *imm_data = &swqe->u.immdata_desc.immediate_data[0];
-	int skb_data_size = skb_headlen(skb);
-	int headersize;
-
-	/* Packet is TCP with TSO enabled */
-	swqe->tx_control |= EHEA_SWQE_TSO;
-	swqe->mss = skb_shinfo(skb)->gso_size;
-	/* copy only eth/ip/tcp headers to immediate data and
-	 * the rest of skb->data to sg1entry
-	 */
-	headersize = ETH_HLEN + ip_hdrlen(skb) + tcp_hdrlen(skb);
-
-	skb_data_size = skb_headlen(skb);
-
-	if (skb_data_size >= headersize) {
-		/* copy immediate data */
-		skb_copy_from_linear_data(skb, imm_data, headersize);
-		swqe->immediate_data_length = headersize;
-
-		if (skb_data_size > headersize) {
-			/* set sg1entry data */
-			sg1entry->l_key = lkey;
-			sg1entry->len = skb_data_size - headersize;
-			sg1entry->vaddr =
-				ehea_map_vaddr(skb->data + headersize);
-			swqe->descriptors++;
-		}
-	} else
-		pr_err("cannot handle fragmented headers\n");
-}
-
-static void write_swqe2_nonTSO(struct sk_buff *skb,
-			       struct ehea_swqe *swqe, u32 lkey)
+static void write_swqe2_immediate(struct sk_buff *skb, struct ehea_swqe *swqe,
+				  u32 lkey)
 {
 	int skb_data_size = skb_headlen(skb);
 	u8 *imm_data = &swqe->u.immdata_desc.immediate_data[0];
 	struct ehea_vsgentry *sg1entry = &swqe->u.immdata_desc.sg_entry;
+	unsigned int immediate_len = SWQE2_MAX_IMM;
 
-	/* Packet is any nonTSO type
-	 *
-	 * Copy as much as possible skb->data to immediate data and
-	 * the rest to sg1entry
-	 */
-	if (skb_data_size >= SWQE2_MAX_IMM) {
-		/* copy immediate data */
-		skb_copy_from_linear_data(skb, imm_data, SWQE2_MAX_IMM);
+	swqe->descriptors = 0;
 
-		swqe->immediate_data_length = SWQE2_MAX_IMM;
+	if (skb_is_gso(skb)) {
+		swqe->tx_control |= EHEA_SWQE_TSO;
+		swqe->mss = skb_shinfo(skb)->gso_size;
+		/*
+		 * For TSO packets we only copy the headers into the
+		 * immediate area.
+		 */
+		immediate_len = ETH_HLEN + ip_hdrlen(skb) + tcp_hdrlen(skb);
+	}
 
-		if (skb_data_size > SWQE2_MAX_IMM) {
-			/* copy sg1entry data */
+	if (skb_is_gso(skb) || skb_data_size >= SWQE2_MAX_IMM) {
+		skb_copy_from_linear_data(skb, imm_data, immediate_len);
+		swqe->immediate_data_length = immediate_len;
+
+		if (skb_data_size > immediate_len) {
 			sg1entry->l_key = lkey;
-			sg1entry->len = skb_data_size - SWQE2_MAX_IMM;
+			sg1entry->len = skb_data_size - immediate_len;
 			sg1entry->vaddr =
-				ehea_map_vaddr(skb->data + SWQE2_MAX_IMM);
+				ehea_map_vaddr(skb->data + immediate_len);
 			swqe->descriptors++;
 		}
 	} else {
@@ -1791,13 +1664,9 @@ static inline void write_swqe2_data(struct sk_buff *skb, struct net_device *dev,
 	nfrags = skb_shinfo(skb)->nr_frags;
 	sg1entry = &swqe->u.immdata_desc.sg_entry;
 	sg_list = (struct ehea_vsgentry *)&swqe->u.immdata_desc.sg_list;
-	swqe->descriptors = 0;
 	sg1entry_contains_frag_data = 0;
 
-	if ((dev->features & NETIF_F_TSO) && skb_shinfo(skb)->gso_size)
-		write_swqe2_TSO(skb, swqe, lkey);
-	else
-		write_swqe2_nonTSO(skb, swqe, lkey);
+	write_swqe2_immediate(skb, swqe, lkey);
 
 	/* write descriptors */
 	if (nfrags > 0) {
@@ -1807,10 +1676,9 @@ static inline void write_swqe2_data(struct sk_buff *skb, struct net_device *dev,
 
 			/* copy sg1entry data */
 			sg1entry->l_key = lkey;
-			sg1entry->len = frag->size;
+			sg1entry->len = skb_frag_size(frag);
 			sg1entry->vaddr =
-				ehea_map_vaddr(page_address(frag->page)
-					       + frag->page_offset);
+				ehea_map_vaddr(skb_frag_address(frag));
 			swqe->descriptors++;
 			sg1entry_contains_frag_data = 1;
 		}
@@ -1821,10 +1689,8 @@ static inline void write_swqe2_data(struct sk_buff *skb, struct net_device *dev,
 			sgentry = &sg_list[i - sg1entry_contains_frag_data];
 
 			sgentry->l_key = lkey;
-			sgentry->len = frag->size;
-			sgentry->vaddr =
-				ehea_map_vaddr(page_address(frag->page)
-					       + frag->page_offset);
+			sgentry->len = frag_size(frag);
+			sgentry->vaddr = ehea_map_vaddr(skb_frag_address(frag));
 			swqe->descriptors++;
 		}
 	}
@@ -2115,41 +1981,44 @@ static int ehea_change_mtu(struct net_device *dev, int new_mtu)
 	return 0;
 }
 
+static void xmit_common(struct sk_buff *skb, struct ehea_swqe *swqe)
+{
+	swqe->tx_control |= EHEA_SWQE_IMM_DATA_PRESENT | EHEA_SWQE_CRC;
+
+	if (skb->protocol != htons(ETH_P_IP))
+		return;
+
+	if (skb->ip_summed == CHECKSUM_PARTIAL)
+		swqe->tx_control |= EHEA_SWQE_IP_CHECKSUM;
+
+	swqe->ip_start = skb_network_offset(skb);
+	swqe->ip_end = swqe->ip_start + ip_hdrlen(skb) - 1;
+
+	switch (ip_hdr(skb)->protocol) {
+	case IPPROTO_UDP:
+		if (skb->ip_summed == CHECKSUM_PARTIAL)
+			swqe->tx_control |= EHEA_SWQE_TCP_CHECKSUM;
+
+		swqe->tcp_offset = swqe->ip_end + 1 +
+				   offsetof(struct udphdr, check);
+		break;
+
+	case IPPROTO_TCP:
+		if (skb->ip_summed == CHECKSUM_PARTIAL)
+			swqe->tx_control |= EHEA_SWQE_TCP_CHECKSUM;
+
+		swqe->tcp_offset = swqe->ip_end + 1 +
+				   offsetof(struct tcphdr, check);
+		break;
+	}
+}
+
 static void ehea_xmit2(struct sk_buff *skb, struct net_device *dev,
 		       struct ehea_swqe *swqe, u32 lkey)
 {
-	if (skb->protocol == htons(ETH_P_IP)) {
-		const struct iphdr *iph = ip_hdr(skb);
+	swqe->tx_control |= EHEA_SWQE_DESCRIPTORS_PRESENT;
 
-		/* IPv4 */
-		swqe->tx_control |= EHEA_SWQE_CRC
-				 | EHEA_SWQE_IP_CHECKSUM
-				 | EHEA_SWQE_TCP_CHECKSUM
-				 | EHEA_SWQE_IMM_DATA_PRESENT
-				 | EHEA_SWQE_DESCRIPTORS_PRESENT;
-
-		write_ip_start_end(swqe, skb);
-
-		if (iph->protocol == IPPROTO_UDP) {
-			if ((iph->frag_off & IP_MF) ||
-			    (iph->frag_off & IP_OFFSET))
-				/* IP fragment, so don't change cs */
-				swqe->tx_control &= ~EHEA_SWQE_TCP_CHECKSUM;
-			else
-				write_udp_offset_end(swqe, skb);
-		} else if (iph->protocol == IPPROTO_TCP) {
-			write_tcp_offset_end(swqe, skb);
-		}
-
-		/* icmp (big data) and ip segmentation packets (all other ip
-		   packets) do not require any special handling */
-
-	} else {
-		/* Other Ethernet Protocol */
-		swqe->tx_control |= EHEA_SWQE_CRC
-				 | EHEA_SWQE_IMM_DATA_PRESENT
-				 | EHEA_SWQE_DESCRIPTORS_PRESENT;
-	}
+	xmit_common(skb, swqe);
 
 	write_swqe2_data(skb, dev, swqe, lkey);
 }
@@ -2157,107 +2026,30 @@ static void ehea_xmit2(struct sk_buff *skb, struct net_device *dev,
 static void ehea_xmit3(struct sk_buff *skb, struct net_device *dev,
 		       struct ehea_swqe *swqe)
 {
-	int nfrags = skb_shinfo(skb)->nr_frags;
 	u8 *imm_data = &swqe->u.immdata_nodesc.immediate_data[0];
-	skb_frag_t *frag;
-	int i;
 
-	if (skb->protocol == htons(ETH_P_IP)) {
-		const struct iphdr *iph = ip_hdr(skb);
+	xmit_common(skb, swqe);
 
-		/* IPv4 */
-		write_ip_start_end(swqe, skb);
-
-		if (iph->protocol == IPPROTO_TCP) {
-			swqe->tx_control |= EHEA_SWQE_CRC
-					 | EHEA_SWQE_IP_CHECKSUM
-					 | EHEA_SWQE_TCP_CHECKSUM
-					 | EHEA_SWQE_IMM_DATA_PRESENT;
-
-			write_tcp_offset_end(swqe, skb);
-
-		} else if (iph->protocol == IPPROTO_UDP) {
-			if ((iph->frag_off & IP_MF) ||
-			    (iph->frag_off & IP_OFFSET))
-				/* IP fragment, so don't change cs */
-				swqe->tx_control |= EHEA_SWQE_CRC
-						 | EHEA_SWQE_IMM_DATA_PRESENT;
-			else {
-				swqe->tx_control |= EHEA_SWQE_CRC
-						 | EHEA_SWQE_IP_CHECKSUM
-						 | EHEA_SWQE_TCP_CHECKSUM
-						 | EHEA_SWQE_IMM_DATA_PRESENT;
-
-				write_udp_offset_end(swqe, skb);
-			}
-		} else {
-			/* icmp (big data) and
-			   ip segmentation packets (all other ip packets) */
-			swqe->tx_control |= EHEA_SWQE_CRC
-					 | EHEA_SWQE_IP_CHECKSUM
-					 | EHEA_SWQE_IMM_DATA_PRESENT;
-		}
-	} else {
-		/* Other Ethernet Protocol */
-		swqe->tx_control |= EHEA_SWQE_CRC | EHEA_SWQE_IMM_DATA_PRESENT;
-	}
-	/* copy (immediate) data */
-	if (nfrags == 0) {
-		/* data is in a single piece */
+	if (!skb->data_len)
 		skb_copy_from_linear_data(skb, imm_data, skb->len);
-	} else {
-		/* first copy data from the skb->data buffer ... */
-		skb_copy_from_linear_data(skb, imm_data,
-					  skb_headlen(skb));
-		imm_data += skb_headlen(skb);
+	else
+		skb_copy_bits(skb, 0, imm_data, skb->len);
 
-		/* ... then copy data from the fragments */
-		for (i = 0; i < nfrags; i++) {
-			frag = &skb_shinfo(skb)->frags[i];
-			memcpy(imm_data,
-			       page_address(frag->page) + frag->page_offset,
-			       frag->size);
-			imm_data += frag->size;
-		}
-	}
 	swqe->immediate_data_length = skb->len;
 	dev_kfree_skb(skb);
-}
-
-static inline int ehea_hash_skb(struct sk_buff *skb, int num_qps)
-{
-	struct tcphdr *tcp;
-	u32 tmp;
-
-	if ((skb->protocol == htons(ETH_P_IP)) &&
-	    (ip_hdr(skb)->protocol == IPPROTO_TCP)) {
-		tcp = (struct tcphdr *)(skb_network_header(skb) +
-					(ip_hdr(skb)->ihl * 4));
-		tmp = (tcp->source + (tcp->dest << 16)) % 31;
-		tmp += ip_hdr(skb)->daddr % 31;
-		return tmp % num_qps;
-	} else
-		return 0;
 }
 
 static int ehea_start_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct ehea_port *port = netdev_priv(dev);
 	struct ehea_swqe *swqe;
-	unsigned long flags;
 	u32 lkey;
 	int swqe_index;
 	struct ehea_port_res *pr;
+	struct netdev_queue *txq;
 
-	pr = &port->port_res[ehea_hash_skb(skb, port->num_tx_qps)];
-
-	if (!spin_trylock(&pr->xmit_lock))
-		return NETDEV_TX_BUSY;
-
-	if (pr->queue_stopped) {
-		spin_unlock(&pr->xmit_lock);
-		return NETDEV_TX_BUSY;
-	}
+	pr = &port->port_res[skb_get_queue_mapping(skb)];
+	txq = netdev_get_tx_queue(dev, skb_get_queue_mapping(skb));
 
 	swqe = ehea_get_swqe(pr->qp, &swqe_index);
 	memset(swqe, 0, SWQE_HEADER_SIZE);
@@ -2307,23 +2099,16 @@ static int ehea_start_xmit(struct sk_buff *skb, struct net_device *dev)
 		ehea_dump(swqe, 512, "swqe");
 
 	if (unlikely(test_bit(__EHEA_STOP_XFER, &ehea_driver_flags))) {
-		netif_stop_queue(dev);
+		netif_tx_stop_queue(txq);
 		swqe->tx_control |= EHEA_SWQE_PURGE;
 	}
 
 	ehea_post_swqe(pr->qp, swqe);
 
 	if (unlikely(atomic_read(&pr->swqe_avail) <= 1)) {
-		spin_lock_irqsave(&pr->netif_queue, flags);
-		if (unlikely(atomic_read(&pr->swqe_avail) <= 1)) {
-			pr->p_stats.queue_stopped++;
-			netif_stop_queue(dev);
-			pr->queue_stopped = 1;
-		}
-		spin_unlock_irqrestore(&pr->netif_queue, flags);
+		pr->p_stats.queue_stopped++;
+		netif_tx_stop_queue(txq);
 	}
-	dev->trans_start = jiffies; /* NETIF_F_LLTX driver :( */
-	spin_unlock(&pr->xmit_lock);
 
 	return NETDEV_TX_OK;
 }
@@ -2468,8 +2253,7 @@ out:
 	return ret;
 }
 
-static int ehea_port_res_setup(struct ehea_port *port, int def_qps,
-			       int add_tx_qps)
+static int ehea_port_res_setup(struct ehea_port *port, int def_qps)
 {
 	int ret, i;
 	struct port_res_cfg pr_cfg, pr_cfg_small_rx;
@@ -2502,7 +2286,7 @@ static int ehea_port_res_setup(struct ehea_port *port, int def_qps,
 		if (ret)
 			goto out_clean_pr;
 	}
-	for (i = def_qps; i < def_qps + add_tx_qps; i++) {
+	for (i = def_qps; i < def_qps; i++) {
 		ret = ehea_init_port_res(port, &port->port_res[i],
 					 &pr_cfg_small_rx, i);
 		if (ret)
@@ -2525,7 +2309,7 @@ static int ehea_clean_all_portres(struct ehea_port *port)
 	int ret = 0;
 	int i;
 
-	for (i = 0; i < port->num_def_qps + port->num_add_tx_qps; i++)
+	for (i = 0; i < port->num_def_qps; i++)
 		ret |= ehea_clean_portres(port, &port->port_res[i]);
 
 	ret |= ehea_destroy_eq(port->qp_eq);
@@ -2557,8 +2341,7 @@ static int ehea_up(struct net_device *dev)
 	if (port->state == EHEA_PORT_UP)
 		return 0;
 
-	ret = ehea_port_res_setup(port, port->num_def_qps,
-				  port->num_add_tx_qps);
+	ret = ehea_port_res_setup(port, port->num_def_qps);
 	if (ret) {
 		netdev_err(dev, "port_res_failed\n");
 		goto out;
@@ -2577,7 +2360,7 @@ static int ehea_up(struct net_device *dev)
 		goto out_clean_pr;
 	}
 
-	for (i = 0; i < port->num_def_qps + port->num_add_tx_qps; i++) {
+	for (i = 0; i < port->num_def_qps; i++) {
 		ret = ehea_activate_qp(port->adapter, port->port_res[i].qp);
 		if (ret) {
 			netdev_err(dev, "activate_qp failed\n");
@@ -2623,7 +2406,7 @@ static void port_napi_disable(struct ehea_port *port)
 {
 	int i;
 
-	for (i = 0; i < port->num_def_qps + port->num_add_tx_qps; i++)
+	for (i = 0; i < port->num_def_qps; i++)
 		napi_disable(&port->port_res[i].napi);
 }
 
@@ -2631,7 +2414,7 @@ static void port_napi_enable(struct ehea_port *port)
 {
 	int i;
 
-	for (i = 0; i < port->num_def_qps + port->num_add_tx_qps; i++)
+	for (i = 0; i < port->num_def_qps; i++)
 		napi_enable(&port->port_res[i].napi);
 }
 
@@ -2647,10 +2430,11 @@ static int ehea_open(struct net_device *dev)
 	ret = ehea_up(dev);
 	if (!ret) {
 		port_napi_enable(port);
-		netif_start_queue(dev);
+		netif_tx_start_all_queues(dev);
 	}
 
 	mutex_unlock(&port->port_lock);
+	schedule_delayed_work(&port->stats_work, msecs_to_jiffies(1000));
 
 	return ret;
 }
@@ -2690,8 +2474,9 @@ static int ehea_stop(struct net_device *dev)
 
 	set_bit(__EHEA_DISABLE_PORT_RESET, &port->flags);
 	cancel_work_sync(&port->reset_task);
+	cancel_delayed_work_sync(&port->stats_work);
 	mutex_lock(&port->port_lock);
-	netif_stop_queue(dev);
+	netif_tx_stop_all_queues(dev);
 	port_napi_disable(port);
 	ret = ehea_down(dev);
 	mutex_unlock(&port->port_lock);
@@ -2717,7 +2502,7 @@ static void ehea_flush_sq(struct ehea_port *port)
 {
 	int i;
 
-	for (i = 0; i < port->num_def_qps + port->num_add_tx_qps; i++) {
+	for (i = 0; i < port->num_def_qps; i++) {
 		struct ehea_port_res *pr = &port->port_res[i];
 		int swqe_max = pr->sq_skba_size - 2 - pr->swqe_ll_count;
 		int ret;
@@ -2751,7 +2536,7 @@ int ehea_stop_qps(struct net_device *dev)
 		goto out;
 	}
 
-	for (i = 0; i < (port->num_def_qps + port->num_add_tx_qps); i++) {
+	for (i = 0; i < (port->num_def_qps); i++) {
 		struct ehea_port_res *pr =  &port->port_res[i];
 		struct ehea_qp *qp = pr->qp;
 
@@ -2853,7 +2638,7 @@ int ehea_restart_qps(struct net_device *dev)
 		goto out;
 	}
 
-	for (i = 0; i < (port->num_def_qps + port->num_add_tx_qps); i++) {
+	for (i = 0; i < (port->num_def_qps); i++) {
 		struct ehea_port_res *pr =  &port->port_res[i];
 		struct ehea_qp *qp = pr->qp;
 
@@ -2915,7 +2700,7 @@ static void ehea_reset_port(struct work_struct *work)
 	mutex_lock(&dlpar_mem_lock);
 	port->resets++;
 	mutex_lock(&port->port_lock);
-	netif_stop_queue(dev);
+	netif_tx_disable(dev);
 
 	port_napi_disable(port);
 
@@ -2931,7 +2716,7 @@ static void ehea_reset_port(struct work_struct *work)
 
 	port_napi_enable(port);
 
-	netif_wake_queue(dev);
+	netif_tx_wake_all_queues(dev);
 out:
 	mutex_unlock(&port->port_lock);
 	mutex_unlock(&dlpar_mem_lock);
@@ -2958,7 +2743,7 @@ static void ehea_rereg_mrs(void)
 
 				if (dev->flags & IFF_UP) {
 					mutex_lock(&port->port_lock);
-					netif_stop_queue(dev);
+					netif_tx_disable(dev);
 					ehea_flush_sq(port);
 					ret = ehea_stop_qps(dev);
 					if (ret) {
@@ -3003,7 +2788,7 @@ static void ehea_rereg_mrs(void)
 						if (!ret) {
 							check_sqs(port);
 							port_napi_enable(port);
-							netif_wake_queue(dev);
+							netif_tx_wake_all_queues(dev);
 						} else {
 							netdev_err(dev, "Unable to restart QPS\n");
 						}
@@ -3158,10 +2943,10 @@ static const struct net_device_ops ehea_netdev_ops = {
 #ifdef CONFIG_NET_POLL_CONTROLLER
 	.ndo_poll_controller	= ehea_netpoll,
 #endif
-	.ndo_get_stats		= ehea_get_stats,
+	.ndo_get_stats64	= ehea_get_stats64,
 	.ndo_set_mac_address	= ehea_set_mac_addr,
 	.ndo_validate_addr	= eth_validate_addr,
-	.ndo_set_multicast_list	= ehea_set_multicast_list,
+	.ndo_set_rx_mode	= ehea_set_multicast_list,
 	.ndo_change_mtu		= ehea_change_mtu,
 	.ndo_vlan_rx_add_vid	= ehea_vlan_rx_add_vid,
 	.ndo_vlan_rx_kill_vid	= ehea_vlan_rx_kill_vid,
@@ -3179,7 +2964,7 @@ struct ehea_port *ehea_setup_single_port(struct ehea_adapter *adapter,
 	int jumbo;
 
 	/* allocate memory for the port structures */
-	dev = alloc_etherdev(sizeof(struct ehea_port));
+	dev = alloc_etherdev_mq(sizeof(struct ehea_port), EHEA_MAX_PORT_RES);
 
 	if (!dev) {
 		pr_err("no mem for net_device\n");
@@ -3211,6 +2996,9 @@ struct ehea_port *ehea_setup_single_port(struct ehea_adapter *adapter,
 	if (ret)
 		goto out_free_mc_list;
 
+	netif_set_real_num_rx_queues(dev, port->num_def_qps);
+	netif_set_real_num_tx_queues(dev, port->num_def_qps);
+
 	port_dev = ehea_register_port(port, dn);
 	if (!port_dev)
 		goto out_free_mc_list;
@@ -3223,29 +3011,28 @@ struct ehea_port *ehea_setup_single_port(struct ehea_adapter *adapter,
 	dev->netdev_ops = &ehea_netdev_ops;
 	ehea_set_ethtool_ops(dev);
 
-	dev->hw_features = NETIF_F_SG | NETIF_F_FRAGLIST | NETIF_F_TSO
+	dev->hw_features = NETIF_F_SG | NETIF_F_TSO
 		      | NETIF_F_IP_CSUM | NETIF_F_HW_VLAN_TX | NETIF_F_LRO;
 	dev->features = NETIF_F_SG | NETIF_F_FRAGLIST | NETIF_F_TSO
 		      | NETIF_F_HIGHDMA | NETIF_F_IP_CSUM | NETIF_F_HW_VLAN_TX
 		      | NETIF_F_HW_VLAN_RX | NETIF_F_HW_VLAN_FILTER
-		      | NETIF_F_LLTX | NETIF_F_RXCSUM;
+		      | NETIF_F_RXCSUM;
+	dev->vlan_features = NETIF_F_SG | NETIF_F_TSO | NETIF_F_HIGHDMA |
+			NETIF_F_IP_CSUM;
 	dev->watchdog_timeo = EHEA_WATCH_DOG_TIMEOUT;
 
-	if (use_lro)
-		dev->features |= NETIF_F_LRO;
-
 	INIT_WORK(&port->reset_task, ehea_reset_port);
+	INIT_DELAYED_WORK(&port->stats_work, ehea_update_stats);
 
 	init_waitqueue_head(&port->swqe_avail_wq);
 	init_waitqueue_head(&port->restart_wq);
 
+	memset(&port->stats, 0, sizeof(struct net_device_stats));
 	ret = register_netdev(dev);
 	if (ret) {
 		pr_err("register_netdev failed. ret=%d\n", ret);
 		goto out_unreg_port;
 	}
-
-	port->lro_max_aggr = lro_max_aggr;
 
 	ret = ehea_get_jumboframe_status(port, &jumbo);
 	if (ret)
@@ -3278,6 +3065,7 @@ static void ehea_shutdown_single_port(struct ehea_port *port)
 	struct ehea_adapter *adapter = port->adapter;
 
 	cancel_work_sync(&port->reset_task);
+	cancel_delayed_work_sync(&port->stats_work);
 	unregister_netdev(port->netdev);
 	ehea_unregister_port(port);
 	kfree(port->mc_list);

@@ -658,7 +658,7 @@ int skb_copy_ubufs(struct sk_buff *skb, gfp_t gfp_mask)
 		}
 		vaddr = kmap_skb_frag(&skb_shinfo(skb)->frags[i]);
 		memcpy(page_address(page),
-		       vaddr + f->page_offset, f->size);
+		       vaddr + f->page_offset, skb_frag_size(f));
 		kunmap_skb_frag(vaddr);
 		page->private = (unsigned long)head;
 		head = page;
@@ -1189,14 +1189,14 @@ int ___pskb_trim(struct sk_buff *skb, unsigned int len)
 		goto drop_pages;
 
 	for (; i < nfrags; i++) {
-		int end = offset + skb_shinfo(skb)->frags[i].size;
+		int end = offset + skb_frag_size(&skb_shinfo(skb)->frags[i]);
 
 		if (end < len) {
 			offset = end;
 			continue;
 		}
 
-		skb_shinfo(skb)->frags[i++].size = len - offset;
+		skb_frag_size_set(&skb_shinfo(skb)->frags[i++], len - offset);
 
 drop_pages:
 		skb_shinfo(skb)->nr_frags = i;
@@ -1305,9 +1305,11 @@ unsigned char *__pskb_pull_tail(struct sk_buff *skb, int delta)
 	/* Estimate size of pulled pages. */
 	eat = delta;
 	for (i = 0; i < skb_shinfo(skb)->nr_frags; i++) {
-		if (skb_shinfo(skb)->frags[i].size >= eat)
+		int size = skb_frag_size(&skb_shinfo(skb)->frags[i]);
+
+		if (size >= eat)
 			goto pull_pages;
-		eat -= skb_shinfo(skb)->frags[i].size;
+		eat -= size;
 	}
 
 	/* If we need update frag list, we are in troubles.
@@ -1370,14 +1372,16 @@ pull_pages:
 	eat = delta;
 	k = 0;
 	for (i = 0; i < skb_shinfo(skb)->nr_frags; i++) {
-		if (skb_shinfo(skb)->frags[i].size <= eat) {
+		int size = skb_frag_size(&skb_shinfo(skb)->frags[i]);
+
+		if (size <= eat) {
 			skb_frag_unref(skb, i);
-			eat -= skb_shinfo(skb)->frags[i].size;
+			eat -= size;
 		} else {
 			skb_shinfo(skb)->frags[k] = skb_shinfo(skb)->frags[i];
 			if (eat) {
 				skb_shinfo(skb)->frags[k].page_offset += eat;
-				skb_shinfo(skb)->frags[k].size -= eat;
+				skb_frag_size_sub(&skb_shinfo(skb)->frags[k], eat);
 				eat = 0;
 			}
 			k++;
@@ -1419,7 +1423,7 @@ int skb_copy_bits(const struct sk_buff *skb, int offset, void *to, int len)
 
 		WARN_ON(start > offset + len);
 
-		end = start + skb_shinfo(skb)->frags[i].size;
+		end = start + skb_frag_size(&skb_shinfo(skb)->frags[i]);
 		if ((copy = end - offset) > 0) {
 			u8 *vaddr;
 
@@ -1618,7 +1622,7 @@ static int __skb_splice_bits(struct sk_buff *skb, struct pipe_inode_info *pipe,
 		const skb_frag_t *f = &skb_shinfo(skb)->frags[seg];
 
 		if (__splice_segment(skb_frag_page(f),
-				     f->page_offset, f->size,
+				     f->page_offset, skb_frag_size(f),
 				     offset, len, skb, spd, 0, sk, pipe))
 			return 1;
 	}
@@ -1728,7 +1732,7 @@ int skb_store_bits(struct sk_buff *skb, int offset, const void *from, int len)
 
 		WARN_ON(start > offset + len);
 
-		end = start + frag->size;
+		end = start + skb_frag_size(frag);
 		if ((copy = end - offset) > 0) {
 			u8 *vaddr;
 
@@ -1801,7 +1805,7 @@ __wsum skb_checksum(const struct sk_buff *skb, int offset,
 
 		WARN_ON(start > offset + len);
 
-		end = start + skb_shinfo(skb)->frags[i].size;
+		end = start + skb_frag_size(&skb_shinfo(skb)->frags[i]);
 		if ((copy = end - offset) > 0) {
 			__wsum csum2;
 			u8 *vaddr;
@@ -1876,7 +1880,7 @@ __wsum skb_copy_and_csum_bits(const struct sk_buff *skb, int offset,
 
 		WARN_ON(start > offset + len);
 
-		end = start + skb_shinfo(skb)->frags[i].size;
+		end = start + skb_frag_size(&skb_shinfo(skb)->frags[i]);
 		if ((copy = end - offset) > 0) {
 			__wsum csum2;
 			u8 *vaddr;
@@ -2149,7 +2153,7 @@ static inline void skb_split_no_header(struct sk_buff *skb,
 	skb->data_len		  = len - pos;
 
 	for (i = 0; i < nfrags; i++) {
-		int size = skb_shinfo(skb)->frags[i].size;
+		int size = skb_frag_size(&skb_shinfo(skb)->frags[i]);
 
 		if (pos + size > len) {
 			skb_shinfo(skb1)->frags[k] = skb_shinfo(skb)->frags[i];
@@ -2165,8 +2169,8 @@ static inline void skb_split_no_header(struct sk_buff *skb,
 				 */
 				skb_frag_ref(skb, i);
 				skb_shinfo(skb1)->frags[0].page_offset += len - pos;
-				skb_shinfo(skb1)->frags[0].size -= len - pos;
-				skb_shinfo(skb)->frags[i].size	= len - pos;
+				skb_frag_size_sub(&skb_shinfo(skb1)->frags[0], len - pos);
+				skb_frag_size_set(&skb_shinfo(skb)->frags[i], len - pos);
 				skb_shinfo(skb)->nr_frags++;
 			}
 			k++;
@@ -2244,7 +2248,7 @@ int skb_shift(struct sk_buff *tgt, struct sk_buff *skb, int shiftlen)
 	} else {
 		merge = to - 1;
 
-		todo -= fragfrom->size;
+		todo -= skb_frag_size(fragfrom);
 		if (todo < 0) {
 			if (skb_prepare_for_shift(skb) ||
 			    skb_prepare_for_shift(tgt))
@@ -2254,8 +2258,8 @@ int skb_shift(struct sk_buff *tgt, struct sk_buff *skb, int shiftlen)
 			fragfrom = &skb_shinfo(skb)->frags[from];
 			fragto = &skb_shinfo(tgt)->frags[merge];
 
-			fragto->size += shiftlen;
-			fragfrom->size -= shiftlen;
+			skb_frag_size_add(fragto, shiftlen);
+			skb_frag_size_sub(fragfrom, shiftlen);
 			fragfrom->page_offset += shiftlen;
 
 			goto onlymerged;
@@ -2279,9 +2283,9 @@ int skb_shift(struct sk_buff *tgt, struct sk_buff *skb, int shiftlen)
 		fragfrom = &skb_shinfo(skb)->frags[from];
 		fragto = &skb_shinfo(tgt)->frags[to];
 
-		if (todo >= fragfrom->size) {
+		if (todo >= skb_frag_size(fragfrom)) {
 			*fragto = *fragfrom;
-			todo -= fragfrom->size;
+			todo -= skb_frag_size(fragfrom);
 			from++;
 			to++;
 
@@ -2289,10 +2293,10 @@ int skb_shift(struct sk_buff *tgt, struct sk_buff *skb, int shiftlen)
 			__skb_frag_ref(fragfrom);
 			fragto->page = fragfrom->page;
 			fragto->page_offset = fragfrom->page_offset;
-			fragto->size = todo;
+			skb_frag_size_set(fragto, todo);
 
 			fragfrom->page_offset += todo;
-			fragfrom->size -= todo;
+			skb_frag_size_sub(fragfrom, todo);
 			todo = 0;
 
 			to++;
@@ -2307,7 +2311,7 @@ int skb_shift(struct sk_buff *tgt, struct sk_buff *skb, int shiftlen)
 		fragfrom = &skb_shinfo(skb)->frags[0];
 		fragto = &skb_shinfo(tgt)->frags[merge];
 
-		fragto->size += fragfrom->size;
+		skb_frag_size_add(fragto, skb_frag_size(fragfrom));
 		__skb_frag_unref(fragfrom);
 	}
 
@@ -2405,7 +2409,7 @@ next_skb:
 
 	while (st->frag_idx < skb_shinfo(st->cur_skb)->nr_frags) {
 		frag = &skb_shinfo(st->cur_skb)->frags[st->frag_idx];
-		block_limit = frag->size + st->stepped_offset;
+		block_limit = skb_frag_size(frag) + st->stepped_offset;
 
 		if (abs_offset < block_limit) {
 			if (!st->frag_data)
@@ -2423,7 +2427,7 @@ next_skb:
 		}
 
 		st->frag_idx++;
-		st->stepped_offset += frag->size;
+		st->stepped_offset += skb_frag_size(frag);
 	}
 
 	if (st->frag_data) {
@@ -2553,13 +2557,13 @@ int skb_append_datato_frags(struct sock *sk, struct sk_buff *skb,
 		left = PAGE_SIZE - frag->page_offset;
 		copy = (length > left)? left : length;
 
-		ret = getfrag(from, skb_frag_address(frag) + frag->size,
+		ret = getfrag(from, skb_frag_address(frag) + skb_frag_size(frag),
 			    offset, copy, 0, skb);
 		if (ret < 0)
 			return -EFAULT;
 
 		/* copy was successful so update the size parameters */
-		frag->size += copy;
+		skb_frag_size_add(frag, copy);
 		skb->len += copy;
 		skb->data_len += copy;
 		offset += copy;
@@ -2706,11 +2710,11 @@ struct sk_buff *skb_segment(struct sk_buff *skb, u32 features)
 		while (pos < offset + len && i < nfrags) {
 			*frag = skb_shinfo(skb)->frags[i];
 			__skb_frag_ref(frag);
-			size = frag->size;
+			size = skb_frag_size(frag);
 
 			if (pos < offset) {
 				frag->page_offset += offset - pos;
-				frag->size -= offset - pos;
+				skb_frag_size_sub(frag, offset - pos);
 			}
 
 			skb_shinfo(nskb)->nr_frags++;
@@ -2719,7 +2723,7 @@ struct sk_buff *skb_segment(struct sk_buff *skb, u32 features)
 				i++;
 				pos += size;
 			} else {
-				frag->size -= pos + size - (offset + len);
+				skb_frag_size_sub(frag, pos + size - (offset + len));
 				goto skip_fraglist;
 			}
 
@@ -2799,7 +2803,7 @@ int skb_gro_receive(struct sk_buff **head, struct sk_buff *skb)
 		} while (--i);
 
 		frag->page_offset += offset;
-		frag->size -= offset;
+		skb_frag_size_sub(frag, offset);
 
 		skb->truesize -= skb->data_len;
 		skb->len -= skb->data_len;
@@ -2851,7 +2855,7 @@ merge:
 		unsigned int eat = offset - headlen;
 
 		skbinfo->frags[0].page_offset += eat;
-		skbinfo->frags[0].size -= eat;
+		skb_frag_size_sub(&skbinfo->frags[0], eat);
 		skb->data_len -= eat;
 		skb->len -= eat;
 		offset = headlen;
@@ -2922,7 +2926,7 @@ __skb_to_sgvec(struct sk_buff *skb, struct scatterlist *sg, int offset, int len)
 
 		WARN_ON(start > offset + len);
 
-		end = start + skb_shinfo(skb)->frags[i].size;
+		end = start + skb_frag_size(&skb_shinfo(skb)->frags[i]);
 		if ((copy = end - offset) > 0) {
 			skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
 

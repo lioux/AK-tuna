@@ -1650,7 +1650,7 @@ static int ql_mii_setup(struct ql3_adapter *qdev)
 				 SUPPORTED_1000baseT_Half |	\
 				 SUPPORTED_1000baseT_Full |	\
 				 SUPPORTED_Autoneg |		\
-				 SUPPORTED_TP);			\
+				 SUPPORTED_TP)			\
 
 static u32 ql_supported_modes(struct ql3_adapter *qdev)
 {
@@ -2388,11 +2388,10 @@ static int ql_send_map(struct ql3_adapter *qdev,
 			seg++;
 		}
 
-		map = pci_map_page(qdev->pdev, frag->page,
-				   frag->page_offset, frag->size,
-				   PCI_DMA_TODEVICE);
+		map = skb_frag_dma_map(&qdev->pdev->dev, frag, 0, skb_frag_size(frag),
+				       DMA_TO_DEVICE);
 
-		err = pci_dma_mapping_error(qdev->pdev, map);
+		err = dma_mapping_error(&qdev->pdev->dev, map);
 		if (err) {
 			netdev_err(qdev->ndev,
 				   "PCI mapping frags failed with error: %d\n",
@@ -2402,9 +2401,9 @@ static int ql_send_map(struct ql3_adapter *qdev,
 
 		oal_entry->dma_lo = cpu_to_le32(LS_64BITS(map));
 		oal_entry->dma_hi = cpu_to_le32(MS_64BITS(map));
-		oal_entry->len = cpu_to_le32(frag->size);
+		oal_entry->len = cpu_to_le32(skb_frag_size(frag));
 		dma_unmap_addr_set(&tx_cb->map[seg], mapaddr, map);
-		dma_unmap_len_set(&tx_cb->map[seg], maplen, frag->size);
+		dma_unmap_len_set(&tx_cb->map[seg], maplen, skb_frag_size(frag));
 		}
 	/* Terminate the last segment. */
 	oal_entry->len |= cpu_to_le32(OAL_LAST_ENTRY);
@@ -3762,7 +3761,6 @@ static const struct net_device_ops ql3xxx_netdev_ops = {
 	.ndo_open		= ql3xxx_open,
 	.ndo_start_xmit		= ql3xxx_send,
 	.ndo_stop		= ql3xxx_close,
-	.ndo_set_multicast_list = NULL, /* not allowed on NIC side */
 	.ndo_change_mtu		= eth_change_mtu,
 	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_set_mac_address	= ql3xxx_set_mac_address,

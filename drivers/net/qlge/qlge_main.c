@@ -36,7 +36,6 @@
 #include <linux/ethtool.h>
 #include <linux/if_vlan.h>
 #include <linux/skbuff.h>
-#include <linux/if_vlan.h>
 #include <linux/delay.h>
 #include <linux/mm.h>
 #include <linux/vmalloc.h>
@@ -1432,12 +1431,10 @@ static int ql_map_send(struct ql_adapter *qdev,
 			map_idx++;
 		}
 
-		map =
-		    pci_map_page(qdev->pdev, frag->page,
-				 frag->page_offset, frag->size,
-				 PCI_DMA_TODEVICE);
+		map = skb_frag_dma_map(&qdev->pdev->dev, frag, 0, skb_frag_size(frag),
+				       DMA_TO_DEVICE);
 
-		err = pci_dma_mapping_error(qdev->pdev, map);
+		err = dma_mapping_error(&qdev->pdev->dev, map);
 		if (err) {
 			netif_err(qdev, tx_queued, qdev->ndev,
 				  "PCI mapping frags failed with error: %d.\n",
@@ -1446,10 +1443,10 @@ static int ql_map_send(struct ql_adapter *qdev,
 		}
 
 		tbd->addr = cpu_to_le64(map);
-		tbd->len = cpu_to_le32(frag->size);
+		tbd->len = cpu_to_le32(skb_frag_size(frag));
 		dma_unmap_addr_set(&tx_ring_desc->map[map_idx], mapaddr, map);
 		dma_unmap_len_set(&tx_ring_desc->map[map_idx], maplen,
-				  frag->size);
+				  skb_frag_size(frag));
 
 	}
 	/* Save the number of segments we've mapped. */
@@ -1478,8 +1475,6 @@ static void ql_process_mac_rx_gro_page(struct ql_adapter *qdev,
 {
 	struct sk_buff *skb;
 	struct bq_desc *lbq_desc = ql_get_curr_lchunk(qdev, rx_ring);
-	struct skb_frag_struct *rx_frag;
-	int nr_frags;
 	struct napi_struct *napi = &rx_ring->napi;
 
 	napi->dev = qdev->ndev;
@@ -1493,12 +1488,10 @@ static void ql_process_mac_rx_gro_page(struct ql_adapter *qdev,
 		return;
 	}
 	prefetch(lbq_desc->p.pg_chunk.va);
-	rx_frag = skb_shinfo(skb)->frags;
-	nr_frags = skb_shinfo(skb)->nr_frags;
-	rx_frag += nr_frags;
-	rx_frag->page = lbq_desc->p.pg_chunk.page;
-	rx_frag->page_offset = lbq_desc->p.pg_chunk.offset;
-	rx_frag->size = length;
+	__skb_fill_page_desc(skb, skb_shinfo(skb)->nr_frags,
+			     lbq_desc->p.pg_chunk.page,
+			     lbq_desc->p.pg_chunk.offset,
+			     length);
 
 	skb->len += length;
 	skb->data_len += length;
@@ -4677,7 +4670,7 @@ static const struct net_device_ops qlge_netdev_ops = {
 	.ndo_start_xmit		= qlge_send,
 	.ndo_change_mtu		= qlge_change_mtu,
 	.ndo_get_stats		= qlge_get_stats,
-	.ndo_set_multicast_list = qlge_set_multicast_list,
+	.ndo_set_rx_mode	= qlge_set_multicast_list,
 	.ndo_set_mac_address	= qlge_set_mac_address,
 	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_tx_timeout		= qlge_tx_timeout,

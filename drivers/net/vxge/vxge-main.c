@@ -585,7 +585,7 @@ vxge_xmit_compl(struct __vxge_hw_fifo *fifo_hw, void *dtr,
 		for (j = 0; j < frg_cnt; j++) {
 			pci_unmap_page(fifo->pdev,
 					txd_priv->dma_buffers[i++],
-					frag->size, PCI_DMA_TODEVICE);
+					skb_frag_size(frag), PCI_DMA_TODEVICE);
 			frag += 1;
 		}
 
@@ -920,14 +920,14 @@ vxge_xmit(struct sk_buff *skb, struct net_device *dev)
 	frag = &skb_shinfo(skb)->frags[0];
 	for (i = 0; i < frg_cnt; i++) {
 		/* ignore 0 length fragment */
-		if (!frag->size)
+		if (!skb_frag_size(frag))
 			continue;
 
-		dma_pointer = (u64) pci_map_page(fifo->pdev, frag->page,
-				frag->page_offset, frag->size,
-				PCI_DMA_TODEVICE);
+		dma_pointer = (u64)skb_frag_dma_map(&fifo->pdev->dev, frag,
+						    0, skb_frag_size(frag),
+						    DMA_TO_DEVICE);
 
-		if (unlikely(pci_dma_mapping_error(fifo->pdev, dma_pointer)))
+		if (unlikely(dma_mapping_error(&fifo->pdev->dev, dma_pointer)))
 			goto _exit2;
 		vxge_debug_tx(VXGE_TRACE,
 			"%s: %s:%d frag = %d dma_pointer = 0x%llx",
@@ -936,7 +936,7 @@ vxge_xmit(struct sk_buff *skb, struct net_device *dev)
 
 		txdl_priv->dma_buffers[j] = dma_pointer;
 		vxge_hw_fifo_txdl_buffer_set(fifo_hw, dtr, j++, dma_pointer,
-					frag->size);
+					skb_frag_size(frag));
 		frag += 1;
 	}
 
@@ -979,7 +979,7 @@ _exit1:
 
 	for (; j < i; j++) {
 		pci_unmap_page(fifo->pdev, txdl_priv->dma_buffers[j],
-			frag->size, PCI_DMA_TODEVICE);
+			skb_frag_size(frag), PCI_DMA_TODEVICE);
 		frag += 1;
 	}
 
@@ -1050,7 +1050,7 @@ vxge_tx_term(void *dtrh, enum vxge_hw_txdl_state state, void *userdata)
 
 	for (j = 0; j < frg_cnt; j++) {
 		pci_unmap_page(fifo->pdev, txd_priv->dma_buffers[i++],
-			       frag->size, PCI_DMA_TODEVICE);
+			       skb_frag_size(frag), PCI_DMA_TODEVICE);
 		frag += 1;
 	}
 
@@ -3354,7 +3354,7 @@ static const struct net_device_ops vxge_netdev_ops = {
 	.ndo_get_stats64        = vxge_get_stats64,
 	.ndo_start_xmit         = vxge_xmit,
 	.ndo_validate_addr      = eth_validate_addr,
-	.ndo_set_multicast_list = vxge_set_multicast,
+	.ndo_set_rx_mode	= vxge_set_multicast,
 	.ndo_do_ioctl           = vxge_ioctl,
 	.ndo_set_mac_address    = vxge_set_mac_addr,
 	.ndo_change_mtu         = vxge_change_mtu,
@@ -4284,6 +4284,12 @@ static int __devinit is_sriov_initialized(struct pci_dev *pdev)
 	return 0;
 }
 
+static const struct vxge_hw_uld_cbs vxge_callbacks = {
+	.link_up = vxge_callback_link_up,
+	.link_down = vxge_callback_link_down,
+	.crit_err = vxge_callback_crit_err,
+};
+
 /**
  * vxge_probe
  * @pdev : structure containing the PCI related information of the device.
@@ -4494,9 +4500,7 @@ vxge_probe(struct pci_dev *pdev, const struct pci_device_id *pre)
 	}
 
 	/* Setting driver callbacks */
-	attr.uld_callbacks.link_up = vxge_callback_link_up;
-	attr.uld_callbacks.link_down = vxge_callback_link_down;
-	attr.uld_callbacks.crit_err = vxge_callback_crit_err;
+	attr.uld_callbacks = &vxge_callbacks;
 
 	status = vxge_hw_device_initialize(&hldev, &attr, device_config);
 	if (status != VXGE_HW_OK) {

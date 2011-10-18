@@ -67,10 +67,10 @@
 #include "tehuti.h"
 
 static DEFINE_PCI_DEVICE_TABLE(bdx_pci_tbl) = {
-	{0x1FC9, 0x3009, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0},
-	{0x1FC9, 0x3010, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0},
-	{0x1FC9, 0x3014, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0},
-	{0}
+	{ PCI_VDEVICE(TEHUTI, 0x3009), },
+	{ PCI_VDEVICE(TEHUTI, 0x3010), },
+	{ PCI_VDEVICE(TEHUTI, 0x3014), },
+	{ 0 }
 };
 
 MODULE_DEVICE_TABLE(pci, bdx_pci_tbl);
@@ -1493,13 +1493,13 @@ bdx_tx_map_skb(struct bdx_priv *priv, struct sk_buff *skb,
 	bdx_tx_db_inc_wptr(db);
 
 	for (i = 0; i < nr_frags; i++) {
-		struct skb_frag_struct *frag;
+		const struct skb_frag_struct *frag;
 
 		frag = &skb_shinfo(skb)->frags[i];
-		db->wptr->len = frag->size;
-		db->wptr->addr.dma =
-		    pci_map_page(priv->pdev, frag->page, frag->page_offset,
-				 frag->size, PCI_DMA_TODEVICE);
+		db->wptr->len = skb_frag_size(frag);
+		db->wptr->addr.dma = skb_frag_dma_map(&priv->pdev->dev, frag,
+						      0, skb_frag_size(frag),
+						      DMA_TO_DEVICE);
 
 		pbl++;
 		pbl->len = CPU_CHIP_SWAP32(db->wptr->len);
@@ -1860,7 +1860,7 @@ static const struct net_device_ops bdx_netdev_ops = {
 	.ndo_start_xmit		= bdx_tx_transmit,
 	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_do_ioctl		= bdx_ioctl,
-	.ndo_set_multicast_list = bdx_setmulti,
+	.ndo_set_rx_mode	= bdx_setmulti,
 	.ndo_change_mtu		= bdx_change_mtu,
 	.ndo_set_mac_address	= bdx_set_mac,
 	.ndo_vlan_rx_add_vid	= bdx_vlan_rx_add_vid,

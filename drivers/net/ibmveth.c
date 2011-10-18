@@ -636,8 +636,8 @@ static int ibmveth_open(struct net_device *netdev)
 		netdev_err(netdev, "unable to request irq 0x%x, rc %d\n",
 			   netdev->irq, rc);
 		do {
-			rc = h_free_logical_lan(adapter->vdev->unit_address);
-		} while (H_IS_LONG_BUSY(rc) || (rc == H_BUSY));
+			lpar_rc = h_free_logical_lan(adapter->vdev->unit_address);
+		} while (H_IS_LONG_BUSY(lpar_rc) || (lpar_rc == H_BUSY));
 
 		goto err_out;
 	}
@@ -757,7 +757,7 @@ static int ibmveth_set_csum_offload(struct net_device *dev, u32 data)
 	struct ibmveth_adapter *adapter = netdev_priv(dev);
 	unsigned long set_attr, clr_attr, ret_attr;
 	unsigned long set_attr6, clr_attr6;
-	long ret, ret6;
+	long ret, ret4, ret6;
 	int rc1 = 0, rc2 = 0;
 	int restart = 0;
 
@@ -770,6 +770,8 @@ static int ibmveth_set_csum_offload(struct net_device *dev, u32 data)
 
 	set_attr = 0;
 	clr_attr = 0;
+	set_attr6 = 0;
+	clr_attr6 = 0;
 
 	if (data) {
 		set_attr = IBMVETH_ILLAN_IPV4_TCP_CSUM;
@@ -784,16 +786,20 @@ static int ibmveth_set_csum_offload(struct net_device *dev, u32 data)
 	if (ret == H_SUCCESS && !(ret_attr & IBMVETH_ILLAN_ACTIVE_TRUNK) &&
 	    !(ret_attr & IBMVETH_ILLAN_TRUNK_PRI_MASK) &&
 	    (ret_attr & IBMVETH_ILLAN_PADDED_PKT_CSUM)) {
-		ret = h_illan_attributes(adapter->vdev->unit_address, clr_attr,
+		ret4 = h_illan_attributes(adapter->vdev->unit_address, clr_attr,
 					 set_attr, &ret_attr);
 
-		if (ret != H_SUCCESS) {
+		if (ret4 != H_SUCCESS) {
 			netdev_err(dev, "unable to change IPv4 checksum "
 					"offload settings. %d rc=%ld\n",
-					data, ret);
+					data, ret4);
 
-			ret = h_illan_attributes(adapter->vdev->unit_address,
-						 set_attr, clr_attr, &ret_attr);
+			h_illan_attributes(adapter->vdev->unit_address,
+					   set_attr, clr_attr, &ret_attr);
+
+			if (data == 1)
+				dev->features &= ~NETIF_F_IP_CSUM;
+
 		} else {
 			adapter->fw_ipv4_csum_support = data;
 		}
@@ -804,15 +810,18 @@ static int ibmveth_set_csum_offload(struct net_device *dev, u32 data)
 		if (ret6 != H_SUCCESS) {
 			netdev_err(dev, "unable to change IPv6 checksum "
 					"offload settings. %d rc=%ld\n",
-					data, ret);
+					data, ret6);
 
-			ret = h_illan_attributes(adapter->vdev->unit_address,
-						 set_attr6, clr_attr6,
-						 &ret_attr);
+			h_illan_attributes(adapter->vdev->unit_address,
+					   set_attr6, clr_attr6, &ret_attr);
+
+			if (data == 1)
+				dev->features &= ~NETIF_F_IPV6_CSUM;
+
 		} else
 			adapter->fw_ipv6_csum_support = data;
 
-		if (ret == H_SUCCESS || ret6 == H_SUCCESS)
+		if (ret4 == H_SUCCESS || ret6 == H_SUCCESS)
 			adapter->rx_csum = data;
 		else
 			rc1 = -EIO;
@@ -1005,16 +1014,15 @@ retry_bounce:
 
 	/* Map the frags */
 	for (i = 0; i < skb_shinfo(skb)->nr_frags; i++) {
-		skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
+		const skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
 
-		dma_addr = dma_map_page(&adapter->vdev->dev, frag->page,
-					frag->page_offset, frag->size,
-					DMA_TO_DEVICE);
+		dma_addr = skb_frag_dma_map(&adapter->vdev->dev, frag, 0,
+					    skb_frag_size(frag), DMA_TO_DEVICE);
 
 		if (dma_mapping_error(&adapter->vdev->dev, dma_addr))
 			goto map_failed_frags;
 
-		descs[i+1].fields.flags_len = desc_flags | frag->size;
+		descs[i+1].fields.flags_len = desc_flags | skb_frag_size(frag);
 		descs[i+1].fields.address = dma_addr;
 	}
 
@@ -1310,7 +1318,7 @@ static const struct net_device_ops ibmveth_netdev_ops = {
 	.ndo_open		= ibmveth_open,
 	.ndo_stop		= ibmveth_close,
 	.ndo_start_xmit		= ibmveth_start_xmit,
-	.ndo_set_multicast_list	= ibmveth_set_multicast_list,
+	.ndo_set_rx_mode	= ibmveth_set_multicast_list,
 	.ndo_do_ioctl		= ibmveth_ioctl,
 	.ndo_change_mtu		= ibmveth_change_mtu,
 	.ndo_fix_features	= ibmveth_fix_features,

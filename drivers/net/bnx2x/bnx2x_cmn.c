@@ -15,6 +15,8 @@
  *
  */
 
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/etherdevice.h>
 #include <linux/if_vlan.h>
 #include <linux/interrupt.h>
@@ -63,8 +65,9 @@ static inline void bnx2x_bz_fp(struct bnx2x *bp, int index)
 	fp->disable_tpa = ((bp->flags & TPA_ENABLE_FLAG) == 0);
 
 #ifdef BCM_CNIC
-	/* We don't want TPA on FCoE, FWD and OOO L2 rings */
-	bnx2x_fcoe(bp, disable_tpa) = 1;
+	/* We don't want TPA on an FCoE L2 ring */
+	if (IS_FCOE_FP(fp))
+		fp->disable_tpa = 1;
 #endif
 }
 
@@ -953,15 +956,16 @@ void __bnx2x_link_report(struct bnx2x *bp)
 		netdev_err(bp->dev, "NIC Link is Down\n");
 		return;
 	} else {
+		const char *duplex;
+		const char *flow;
+
 		netif_carrier_on(bp->dev);
-		netdev_info(bp->dev, "NIC Link is Up, ");
-		pr_cont("%d Mbps ", cur_data.line_speed);
 
 		if (test_and_clear_bit(BNX2X_LINK_REPORT_FD,
 				       &cur_data.link_report_flags))
-			pr_cont("full duplex");
+			duplex = "full";
 		else
-			pr_cont("half duplex");
+			duplex = "half";
 
 		/* Handle the FC at the end so that only these flags would be
 		 * possibly set. This way we may easily check if there is no FC
@@ -970,24 +974,25 @@ void __bnx2x_link_report(struct bnx2x *bp)
 		if (cur_data.link_report_flags) {
 			if (test_bit(BNX2X_LINK_REPORT_RX_FC_ON,
 				     &cur_data.link_report_flags)) {
-				pr_cont(", receive ");
 				if (test_bit(BNX2X_LINK_REPORT_TX_FC_ON,
 				     &cur_data.link_report_flags))
-					pr_cont("& transmit ");
+					flow = "ON - receive & transmit";
+				else
+					flow = "ON - receive";
 			} else {
-				pr_cont(", transmit ");
+				flow = "ON - transmit";
 			}
-			pr_cont("flow control ON");
+		} else {
+			flow = "none";
 		}
-		pr_cont("\n");
+		netdev_info(bp->dev, "NIC Link is Up, %d Mbps %s duplex, Flow control: %s\n",
+			    cur_data.line_speed, duplex, flow);
 	}
 }
 
 void bnx2x_init_rx_rings(struct bnx2x *bp)
 {
 	int func = BP_FUNC(bp);
-	int max_agg_queues = CHIP_IS_E1(bp) ? ETH_MAX_AGGREGATION_QUEUES_E1 :
-					      ETH_MAX_AGGREGATION_QUEUES_E1H_E2;
 	u16 ring_prod;
 	int i, j;
 
@@ -1000,7 +1005,7 @@ void bnx2x_init_rx_rings(struct bnx2x *bp)
 
 		if (!fp->disable_tpa) {
 			/* Fill the per-aggregtion pool */
-			for (i = 0; i < max_agg_queues; i++) {
+			for (i = 0; i < MAX_AGG_QS(bp); i++) {
 				struct bnx2x_agg_info *tpa_info =
 					&fp->tpa_info[i];
 				struct sw_rx_bd *first_buf =
@@ -1040,7 +1045,7 @@ void bnx2x_init_rx_rings(struct bnx2x *bp)
 					bnx2x_free_rx_sge_range(bp, fp,
 								ring_prod);
 					bnx2x_free_tpa_pool(bp, fp,
-							    max_agg_queues);
+							    MAX_AGG_QS(bp));
 					fp->disable_tpa = 1;
 					ring_prod = 0;
 					break;
@@ -1136,9 +1141,7 @@ static void bnx2x_free_rx_skbs(struct bnx2x *bp)
 		bnx2x_free_rx_bds(fp);
 
 		if (!fp->disable_tpa)
-			bnx2x_free_tpa_pool(bp, fp, CHIP_IS_E1(bp) ?
-					    ETH_MAX_AGGREGATION_QUEUES_E1 :
-					    ETH_MAX_AGGREGATION_QUEUES_E1H_E2);
+			bnx2x_free_tpa_pool(bp, fp, MAX_AGG_QS(bp));
 	}
 }
 
@@ -1404,10 +1407,9 @@ void bnx2x_netif_stop(struct bnx2x *bp, int disable_hw)
 u16 bnx2x_select_queue(struct net_device *dev, struct sk_buff *skb)
 {
 	struct bnx2x *bp = netdev_priv(dev);
+
 #ifdef BCM_CNIC
-	if (NO_FCOE(bp))
-		return skb_tx_hash(dev, skb);
-	else {
+	if (!NO_FCOE(bp)) {
 		struct ethhdr *hdr = (struct ethhdr *)skb->data;
 		u16 ether_type = ntohs(hdr->h_proto);
 
@@ -1424,8 +1426,7 @@ u16 bnx2x_select_queue(struct net_device *dev, struct sk_buff *skb)
 			return bnx2x_fcoe_tx(bp, txq_index);
 	}
 #endif
-	/* Select a none-FCoE queue:  if FCoE is enabled, exclude FCoE L2 ring
-	 */
+	/* select a non-FCoE queue */
 	return __skb_tx_hash(dev, skb, BNX2X_NUM_ETH_QUEUES(bp));
 }
 
@@ -1448,6 +1449,28 @@ void bnx2x_set_num_queues(struct bnx2x *bp)
 	bp->num_queues += NON_ETH_CONTEXT_USE;
 }
 
+/**
+ * bnx2x_set_real_num_queues - configure netdev->real_num_[tx,rx]_queues
+ *
+ * @bp:		Driver handle
+ *
+ * We currently support for at most 16 Tx queues for each CoS thus we will
+ * allocate a multiple of 16 for ETH L2 rings according to the value of the
+ * bp->max_cos.
+ *
+ * If there is an FCoE L2 queue the appropriate Tx queue will have the next
+ * index after all ETH L2 indices.
+ *
+ * If the actual number of Tx queues (for each CoS) is less than 16 then there
+ * will be the holes at the end of each group of 16 ETh L2 indices (0..15,
+ * 16..31,...) with indicies that are not coupled with any real Tx queue.
+ *
+ * The proper configuration of skb->queue_mapping is handled by
+ * bnx2x_select_queue() and __skb_tx_hash().
+ *
+ * bnx2x_setup_tc() takes care of the proper TC mappings so that __skb_tx_hash()
+ * will return a proper Tx index if TC is enabled (netdev->num_tc > 0).
+ */
 static inline int bnx2x_set_real_num_queues(struct bnx2x *bp)
 {
 	int rc, tx, rx;
@@ -1989,14 +2012,20 @@ int bnx2x_nic_unload(struct bnx2x *bp, int unload_mode)
 		return -EINVAL;
 	}
 
+	/*
+	 * It's important to set the bp->state to the value different from
+	 * BNX2X_STATE_OPEN and only then stop the Tx. Otherwise bnx2x_tx_int()
+	 * may restart the Tx from the NAPI context (see bnx2x_tx_int()).
+	 */
+	bp->state = BNX2X_STATE_CLOSING_WAIT4_HALT;
+	smp_mb();
+
 	/* Stop Tx */
 	bnx2x_tx_disable(bp);
 
 #ifdef BCM_CNIC
 	bnx2x_cnic_notify(bp, CNIC_CTL_STOP_CMD);
 #endif
-	bp->state = BNX2X_STATE_CLOSING_WAIT4_HALT;
-	smp_mb();
 
 	bp->rx_mode = BNX2X_RX_MODE_NONE;
 
@@ -2334,7 +2363,7 @@ static int bnx2x_pkt_req_lin(struct bnx2x *bp, struct sk_buff *skb,
 			/* Calculate the first sum - it's special */
 			for (frag_idx = 0; frag_idx < wnd_size - 1; frag_idx++)
 				wnd_sum +=
-					skb_shinfo(skb)->frags[frag_idx].size;
+					skb_frag_size(&skb_shinfo(skb)->frags[frag_idx]);
 
 			/* If there was data on linear skb data - check it */
 			if (first_bd_sz > 0) {
@@ -2350,14 +2379,14 @@ static int bnx2x_pkt_req_lin(struct bnx2x *bp, struct sk_buff *skb,
 			   check all windows */
 			for (wnd_idx = 0; wnd_idx <= num_wnds; wnd_idx++) {
 				wnd_sum +=
-			  skb_shinfo(skb)->frags[wnd_idx + wnd_size - 1].size;
+			  skb_frag_size(&skb_shinfo(skb)->frags[wnd_idx + wnd_size - 1]);
 
 				if (unlikely(wnd_sum < lso_mss)) {
 					to_copy = 1;
 					break;
 				}
 				wnd_sum -=
-					skb_shinfo(skb)->frags[wnd_idx].size;
+					skb_frag_size(&skb_shinfo(skb)->frags[wnd_idx]);
 			}
 		} else {
 			/* in non-LSO too fragmented packet should always
@@ -2578,7 +2607,7 @@ netdev_tx_t bnx2x_start_xmit(struct sk_buff *skb, struct net_device *dev)
 #endif
 
 	/* enable this debug print to view the transmission queue being used
-	DP(BNX2X_MSG_FP, "indices: txq %d, fp %d, txdata %d",
+	DP(BNX2X_MSG_FP, "indices: txq %d, fp %d, txdata %d\n",
 	   txq_index, fp_index, txdata_index); */
 
 	/* locate the fastpath and the txdata */
@@ -2587,7 +2616,7 @@ netdev_tx_t bnx2x_start_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	/* enable this debug print to view the tranmission details
 	DP(BNX2X_MSG_FP,"transmitting packet cid %d fp index %d txdata_index %d"
-			" tx_data ptr %p fp pointer %p",
+			" tx_data ptr %p fp pointer %p\n",
 	   txdata->cid, fp_index, txdata_index, txdata, fp); */
 
 	if (unlikely(bnx2x_tx_avail(bp, txdata) <
@@ -2767,9 +2796,8 @@ netdev_tx_t bnx2x_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	for (i = 0; i < skb_shinfo(skb)->nr_frags; i++) {
 		skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
 
-		mapping = dma_map_page(&bp->pdev->dev, frag->page,
-				       frag->page_offset, frag->size,
-				       DMA_TO_DEVICE);
+		mapping = skb_frag_dma_map(&bp->pdev->dev, frag, 0,
+					   skb_frag_size(frag), DMA_TO_DEVICE);
 		if (unlikely(dma_mapping_error(&bp->pdev->dev, mapping))) {
 
 			DP(NETIF_MSG_TX_QUEUED, "Unable to map page - "
@@ -2793,8 +2821,8 @@ netdev_tx_t bnx2x_start_xmit(struct sk_buff *skb, struct net_device *dev)
 
 		tx_data_bd->addr_hi = cpu_to_le32(U64_HI(mapping));
 		tx_data_bd->addr_lo = cpu_to_le32(U64_LO(mapping));
-		tx_data_bd->nbytes = cpu_to_le16(frag->size);
-		le16_add_cpu(&pkt_size, frag->size);
+		tx_data_bd->nbytes = cpu_to_le16(skb_frag_size(frag));
+		le16_add_cpu(&pkt_size, skb_frag_size(frag));
 		nbd++;
 
 		DP(NETIF_MSG_TX_QUEUED,
@@ -2904,14 +2932,14 @@ int bnx2x_setup_tc(struct net_device *dev, u8 num_tc)
 	/* requested to support too many traffic classes */
 	if (num_tc > bp->max_cos) {
 		DP(NETIF_MSG_TX_ERR, "support for too many traffic classes"
-				     " requested: %d. max supported is %d",
+				     " requested: %d. max supported is %d\n",
 				     num_tc, bp->max_cos);
 		return -EINVAL;
 	}
 
 	/* declare amount of supported traffic classes */
 	if (netdev_set_num_tc(dev, num_tc)) {
-		DP(NETIF_MSG_TX_ERR, "failed to declare %d traffic classes",
+		DP(NETIF_MSG_TX_ERR, "failed to declare %d traffic classes\n",
 				     num_tc);
 		return -EINVAL;
 	}
@@ -2919,7 +2947,7 @@ int bnx2x_setup_tc(struct net_device *dev, u8 num_tc)
 	/* configure priority to traffic class mapping */
 	for (prio = 0; prio < BNX2X_MAX_PRIORITY; prio++) {
 		netdev_set_prio_tc_map(dev, prio, bp->prio_to_cos[prio]);
-		DP(BNX2X_MSG_SP, "mapping priority %d to tc %d",
+		DP(BNX2X_MSG_SP, "mapping priority %d to tc %d\n",
 		   prio, bp->prio_to_cos[prio]);
 	}
 
@@ -2928,10 +2956,10 @@ int bnx2x_setup_tc(struct net_device *dev, u8 num_tc)
 	   This can be used for ets or pfc, and save the effort of setting
 	   up a multio class queue disc or negotiating DCBX with a switch
 	netdev_set_prio_tc_map(dev, 0, 0);
-	DP(BNX2X_MSG_SP, "mapping priority %d to tc %d", 0, 0);
+	DP(BNX2X_MSG_SP, "mapping priority %d to tc %d\n", 0, 0);
 	for (prio = 1; prio < 16; prio++) {
 		netdev_set_prio_tc_map(dev, prio, 1);
-		DP(BNX2X_MSG_SP, "mapping priority %d to tc %d", prio, 1);
+		DP(BNX2X_MSG_SP, "mapping priority %d to tc %d\n", prio, 1);
 	} */
 
 	/* configure traffic class to transmission queue mapping */
@@ -2939,7 +2967,7 @@ int bnx2x_setup_tc(struct net_device *dev, u8 num_tc)
 		count = BNX2X_NUM_ETH_QUEUES(bp);
 		offset = cos * MAX_TXQS_PER_COS;
 		netdev_set_tc_queue(dev, cos, count, offset);
-		DP(BNX2X_MSG_SP, "mapping tc %d to offset %d count %d",
+		DP(BNX2X_MSG_SP, "mapping tc %d to offset %d count %d\n",
 		   cos, offset, count);
 	}
 
@@ -3027,7 +3055,7 @@ static void bnx2x_free_fp_mem_at(struct bnx2x *bp, int fp_index)
 			struct bnx2x_fp_txdata *txdata = &fp->txdata[cos];
 
 			DP(BNX2X_MSG_SP,
-			   "freeing tx memory of fp %d cos %d cid %d",
+			   "freeing tx memory of fp %d cos %d cid %d\n",
 			   fp_index, cos, txdata->cid);
 
 			BNX2X_FREE(txdata->tx_buf_ring);
@@ -3068,15 +3096,20 @@ static int bnx2x_alloc_fp_mem_at(struct bnx2x *bp, int index)
 	struct bnx2x_fastpath *fp = &bp->fp[index];
 	int ring_size = 0;
 	u8 cos;
+	int rx_ring_size = 0;
 
 	/* if rx_ring_size specified - use it */
-	int rx_ring_size = bp->rx_ring_size ? bp->rx_ring_size :
-			   MAX_RX_AVAIL/BNX2X_NUM_RX_QUEUES(bp);
+	if (!bp->rx_ring_size) {
 
-	/* allocate at least number of buffers required by FW */
-	rx_ring_size = max_t(int, bp->disable_tpa ? MIN_RX_SIZE_NONTPA :
-						    MIN_RX_SIZE_TPA,
-				  rx_ring_size);
+		rx_ring_size = MAX_RX_AVAIL/BNX2X_NUM_RX_QUEUES(bp);
+
+		/* allocate at least number of buffers required by FW */
+		rx_ring_size = max_t(int, bp->disable_tpa ? MIN_RX_SIZE_NONTPA :
+				     MIN_RX_SIZE_TPA, rx_ring_size);
+
+		bp->rx_ring_size = rx_ring_size;
+	} else
+		rx_ring_size = bp->rx_ring_size;
 
 	/* Common */
 	sb = &bnx2x_fp(bp, index, status_blk);
@@ -3109,7 +3142,7 @@ static int bnx2x_alloc_fp_mem_at(struct bnx2x *bp, int index)
 			struct bnx2x_fp_txdata *txdata = &fp->txdata[cos];
 
 			DP(BNX2X_MSG_SP, "allocating tx memory of "
-					 "fp %d cos %d",
+					 "fp %d cos %d\n",
 			   index, cos);
 
 			BNX2X_ALLOC(txdata->tx_buf_ring,
@@ -3359,7 +3392,7 @@ int bnx2x_change_mtu(struct net_device *dev, int new_mtu)
 	struct bnx2x *bp = netdev_priv(dev);
 
 	if (bp->recovery_state != BNX2X_RECOVERY_DONE) {
-		printk(KERN_ERR "Handling parity error recovery. Try again later\n");
+		pr_err("Handling parity error recovery. Try again later\n");
 		return -EAGAIN;
 	}
 
@@ -3485,7 +3518,7 @@ int bnx2x_resume(struct pci_dev *pdev)
 	bp = netdev_priv(dev);
 
 	if (bp->recovery_state != BNX2X_RECOVERY_DONE) {
-		printk(KERN_ERR "Handling parity error recovery. Try again later\n");
+		pr_err("Handling parity error recovery. Try again later\n");
 		return -EAGAIN;
 	}
 

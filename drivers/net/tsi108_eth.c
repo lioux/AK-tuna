@@ -709,12 +709,13 @@ static int tsi108_send_packet(struct sk_buff * skb, struct net_device *dev)
 			data->txring[tx].len = skb_headlen(skb);
 			misc |= TSI108_TX_SOF;
 		} else {
-			skb_frag_t *frag = &skb_shinfo(skb)->frags[i - 1];
+			const skb_frag_t *frag = &skb_shinfo(skb)->frags[i - 1];
 
-			data->txring[tx].buf0 =
-			    dma_map_page(NULL, frag->page, frag->page_offset,
-					    frag->size, DMA_TO_DEVICE);
-			data->txring[tx].len = frag->size;
+			data->txring[tx].buf0 = skb_frag_dma_map(NULL, frag,
+								 0,
+								 skb_frag_size(frag),
+								 DMA_TO_DEVICE);
+			data->txring[tx].len = skb_frag_size(frag);
 		}
 
 		if (i == frags - 1)
@@ -1554,7 +1555,7 @@ static const struct net_device_ops tsi108_netdev_ops = {
 	.ndo_open		= tsi108_open,
 	.ndo_stop		= tsi108_close,
 	.ndo_start_xmit		= tsi108_send_packet,
-	.ndo_set_multicast_list	= tsi108_set_rx_mode,
+	.ndo_set_rx_mode	= tsi108_set_rx_mode,
 	.ndo_get_stats		= tsi108_get_stats,
 	.ndo_do_ioctl		= tsi108_do_ioctl,
 	.ndo_set_mac_address	= tsi108_set_mac,

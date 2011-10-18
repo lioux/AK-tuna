@@ -817,7 +817,7 @@ new_segment:
 			goto wait_for_memory;
 
 		if (can_coalesce) {
-			skb_shinfo(skb)->frags[i - 1].size += copy;
+			skb_frag_size_add(&skb_shinfo(skb)->frags[i - 1], copy);
 		} else {
 			get_page(page);
 			skb_fill_page_desc(skb, i, page, offset, copy);
@@ -1061,8 +1061,7 @@ new_segment:
 
 				/* Update the skb. */
 				if (merge) {
-					skb_shinfo(skb)->frags[i - 1].size +=
-									copy;
+					skb_frag_size_add(&skb_shinfo(skb)->frags[i - 1], copy);
 				} else {
 					skb_fill_page_desc(skb, i, page, off, copy);
 					if (TCP_PAGE(sk)) {
@@ -3054,8 +3053,8 @@ int tcp_md5_hash_skb_data(struct tcp_md5sig_pool *hp,
 	for (i = 0; i < shi->nr_frags; ++i) {
 		const struct skb_frag_struct *f = &shi->frags[i];
 		struct page *page = skb_frag_page(f);
-		sg_set_page(&sg, page, f->size, f->page_offset);
-		if (crypto_hash_update(desc, &sg, f->size))
+		sg_set_page(&sg, page, skb_frag_size(f), f->page_offset);
+		if (crypto_hash_update(desc, &sg, skb_frag_size(f)))
 			return 1;
 	}
 
