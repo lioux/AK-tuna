@@ -2692,9 +2692,8 @@ dhd_open(struct net_device *net)
 				ret = -1;
 				goto exit;
 			}
-		} else {
 		}
-#endif 
+#endif /* defined(WL_CFG80211) */
 
 		if (dhd->pub.busstate != DHD_BUS_DATA) {
 

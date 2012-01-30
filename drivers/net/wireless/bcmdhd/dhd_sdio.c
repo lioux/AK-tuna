@@ -3716,6 +3716,9 @@ dhdsdio_download_state(dhd_bus_t *bus, bool enter)
 	int bcmerror = 0;
 	int foundcr4 = 0;
 
+	if (!bus->sih)
+		return BCME_ERROR;
+
 	/* To enter download state, disable ARM and reset SOCRAM.
 	 * To exit download state, simply reset ARM (default is RAM boot).
 	 */
