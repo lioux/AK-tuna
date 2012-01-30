@@ -434,6 +434,12 @@ uint dhd_radio_up = 1;
 char iface_name[IFNAMSIZ] = {'\0'};
 module_param_string(iface_name, iface_name, IFNAMSIZ, 0);
 
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 0))
+#define BLOCKABLE()	(!in_atomic())
+#else
+#define BLOCKABLE()	(!in_interrupt())
+#endif
+
 /* The following are specific to the SDIO dongle */
 
 /* IOCTL response timeout */
