@@ -731,6 +731,10 @@ EXPORT_SYMBOL_GPL(kfree_call_rcu);
  */
 void synchronize_rcu(void)
 {
+	rcu_lockdep_assert(!lock_is_held(&rcu_bh_lock_map) &&
+			   !lock_is_held(&rcu_lock_map) &&
+			   !lock_is_held(&rcu_sched_lock_map),
+			   "Illegal synchronize_rcu() in RCU read-side critical section");
 	if (!rcu_scheduler_active)
 		return;
 	wait_rcu_gp(call_rcu);
@@ -924,9 +928,9 @@ static int rcu_preempt_pending(int cpu)
 }
 
 /*
- * Does preemptible RCU need the CPU to stay out of dynticks mode?
+ * Does preemptible RCU have callbacks on this CPU?
  */
-static int rcu_preempt_needs_cpu(int cpu)
+static int rcu_preempt_cpu_has_callbacks(int cpu)
 {
 	return !!per_cpu(rcu_preempt_data, cpu).nxtlist;
 }
@@ -1165,9 +1169,9 @@ static int rcu_preempt_pending(int cpu)
 }
 
 /*
- * Because preemptible RCU does not exist, it never needs any CPU.
+ * Because preemptible RCU does not exist, it never has callbacks
  */
-static int rcu_preempt_needs_cpu(int cpu)
+static int rcu_preempt_cpu_has_callbacks(int cpu)
 {
 	return 0;
 }
