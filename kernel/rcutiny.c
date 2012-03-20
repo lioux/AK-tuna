@@ -54,7 +54,7 @@ static void __call_rcu(struct rcu_head *head,
 
 #include "rcutiny_plugin.h"
 
-static long long rcu_dynticks_nesting = DYNTICK_TASK_NESTING;
+static long long rcu_dynticks_nesting = DYNTICK_TASK_EXIT_IDLE;
 
 /* Common code for rcu_idle_enter() and rcu_irq_exit(), see kernel/rcutree.c. */
 static void rcu_idle_enter_common(long long oldval)
@@ -89,10 +89,16 @@ void rcu_idle_enter(void)
 
 	local_irq_save(flags);
 	oldval = rcu_dynticks_nesting;
-	rcu_dynticks_nesting = 0;
+	WARN_ON_ONCE((rcu_dynticks_nesting & DYNTICK_TASK_NEST_MASK) == 0);
+	if ((rcu_dynticks_nesting & DYNTICK_TASK_NEST_MASK) ==
+	    DYNTICK_TASK_NEST_VALUE)
+		rcu_dynticks_nesting = 0;
+	else
+		rcu_dynticks_nesting  -= DYNTICK_TASK_NEST_VALUE;
 	rcu_idle_enter_common(oldval);
 	local_irq_restore(flags);
 }
+EXPORT_SYMBOL_GPL(rcu_idle_enter);
 
 /*
  * Exit an interrupt handler towards idle.
@@ -141,11 +147,15 @@ void rcu_idle_exit(void)
 
 	local_irq_save(flags);
 	oldval = rcu_dynticks_nesting;
-	WARN_ON_ONCE(oldval != 0);
-	rcu_dynticks_nesting = DYNTICK_TASK_NESTING;
+	WARN_ON_ONCE(rcu_dynticks_nesting < 0);
+	if (rcu_dynticks_nesting & DYNTICK_TASK_NEST_MASK)
+		rcu_dynticks_nesting += DYNTICK_TASK_NEST_VALUE;
+	else
+		rcu_dynticks_nesting = DYNTICK_TASK_EXIT_IDLE;
 	rcu_idle_exit_common(oldval);
 	local_irq_restore(flags);
 }
+EXPORT_SYMBOL_GPL(rcu_idle_exit);
 
 /*
  * Enter an interrupt handler, moving away from idle.
@@ -259,7 +269,7 @@ static void __rcu_process_callbacks(struct rcu_ctrlblk *rcp)
 
 	/* If no RCU callbacks ready to invoke, just return. */
 	if (&rcp->rcucblist == rcp->donetail) {
-		RCU_TRACE(trace_rcu_batch_start(rcp->name, 0, -1));
+		RCU_TRACE(trace_rcu_batch_start(rcp->name, 0, 0, -1));
 		RCU_TRACE(trace_rcu_batch_end(rcp->name, 0,
 					      ACCESS_ONCE(rcp->rcucblist),
 					      need_resched(),
@@ -270,7 +280,7 @@ static void __rcu_process_callbacks(struct rcu_ctrlblk *rcp)
 
 	/* Move the ready-to-invoke callbacks to a local list. */
 	local_irq_save(flags);
-	RCU_TRACE(trace_rcu_batch_start(rcp->name, 0, -1));
+	RCU_TRACE(trace_rcu_batch_start(rcp->name, 0, rcp->qlen, -1));
 	list = rcp->rcucblist;
 	rcp->rcucblist = *rcp->donetail;
 	*rcp->donetail = NULL;

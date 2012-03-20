@@ -312,6 +312,88 @@ struct mesh_path *mesh_path_lookup_by_idx(int idx, struct ieee80211_sub_if_data 
 }
 
 /**
+ * mesh_path_add_gate - add the given mpath to a mesh gate to our path table
+ * @mpath: gate path to add to table
+ */
+int mesh_path_add_gate(struct mesh_path *mpath)
+{
+	struct mesh_table *tbl;
+	struct mpath_node *gate, *new_gate;
+	struct hlist_node *n;
+	int err;
+
+	rcu_read_lock();
+	tbl = rcu_dereference(mesh_paths);
+
+	hlist_for_each_entry_rcu(gate, n, tbl->known_gates, list)
+		if (gate->mpath == mpath) {
+			err = -EEXIST;
+			goto err_rcu;
+		}
+
+	new_gate = kzalloc(sizeof(struct mpath_node), GFP_ATOMIC);
+	if (!new_gate) {
+		err = -ENOMEM;
+		goto err_rcu;
+	}
+
+	mpath->is_gate = true;
+	mpath->sdata->u.mesh.num_gates++;
+	new_gate->mpath = mpath;
+	spin_lock_bh(&tbl->gates_lock);
+	hlist_add_head_rcu(&new_gate->list, tbl->known_gates);
+	spin_unlock_bh(&tbl->gates_lock);
+	rcu_read_unlock();
+	mpath_dbg("Mesh path (%s): Recorded new gate: %pM. %d known gates\n",
+		  mpath->sdata->name, mpath->dst,
+		  mpath->sdata->u.mesh.num_gates);
+	return 0;
+err_rcu:
+	rcu_read_unlock();
+	return err;
+}
+
+/**
+ * mesh_gate_del - remove a mesh gate from the list of known gates
+ * @tbl: table which holds our list of known gates
+ * @mpath: gate mpath
+ *
+ * Returns: 0 on success
+ *
+ * Locking: must be called inside rcu_read_lock() section
+ */
+static int mesh_gate_del(struct mesh_table *tbl, struct mesh_path *mpath)
+{
+	struct mpath_node *gate;
+	struct hlist_node *p, *q;
+
+	hlist_for_each_entry_safe(gate, p, q, tbl->known_gates, list)
+		if (gate->mpath == mpath) {
+			spin_lock_bh(&tbl->gates_lock);
+			hlist_del_rcu(&gate->list);
+			kfree_rcu(gate, rcu);
+			spin_unlock_bh(&tbl->gates_lock);
+			mpath->sdata->u.mesh.num_gates--;
+			mpath->is_gate = false;
+			mpath_dbg("Mesh path (%s): Deleted gate: %pM. "
+				  "%d known gates\n", mpath->sdata->name,
+				  mpath->dst, mpath->sdata->u.mesh.num_gates);
+			break;
+		}
+
+	return 0;
+}
+
+/**
+ * mesh_gate_num - number of gates known to this interface
+ * @sdata: subif data
+ */
+int mesh_gate_num(struct ieee80211_sub_if_data *sdata)
+{
+	return sdata->u.mesh.num_gates;
+}
+
+/**
  * mesh_path_add - allocate and add a new path to the mesh path table
  * @addr: destination address of the path (ETH_ALEN length)
  * @sdata: local subif

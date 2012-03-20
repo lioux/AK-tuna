@@ -185,22 +185,13 @@ int unregister_external_interrupt(u16 code, ext_int_handler_t handler)
 	struct ext_int_info *p, *q;
 	int index;
 
-	index = ext_hash(code);
-	q = NULL;
-	p = ext_int_hash[index];
-	while (p) {
-		if (p->code == code && p->handler == handler)
-			break;
-		q = p;
-		p = p->next;
-	}
-	if (!p)
-		return -ENOENT;
-	if (q)
-		q->next = p->next;
-	else
-		ext_int_hash[index] = p->next;
-	kfree(p);
+	spin_lock_irqsave(&ext_int_hash_lock, flags);
+	list_for_each_entry_rcu(p, &ext_int_hash[index], entry)
+		if (p->code == code && p->handler == handler) {
+			list_del_rcu(&p->entry);
+			kfree_rcu(p, rcu);
+		}
+	spin_unlock_irqrestore(&ext_int_hash_lock, flags);
 	return 0;
 }
 EXPORT_SYMBOL(unregister_external_interrupt);
