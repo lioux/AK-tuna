@@ -3446,13 +3446,7 @@ wl_cfg80211_set_power_mgmt(struct wiphy *wiphy, struct net_device *dev,
 		return err;
 	}
 
-	/* android has special hooks to change pm when kernel suspended */
-#ifndef SUPPORT_PM2_ONLY
-	pm = enabled ? ((dhd->in_suspend) ? PM_MAX : PM_FAST) : PM_OFF;
-#else
-	pm = enabled ? PM_FAST : PM_OFF;
-#endif
-
+	pm = PM_OFF; /* enabled ? PM_FAST : PM_OFF; */
 	/* Do not enable the power save after assoc if it is p2p interface */
 	if (_net_info->pm_block || wl->vsdb_mode) {
 		WL_DBG(("Do not enable the power save\n"));
