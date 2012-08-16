@@ -129,8 +129,14 @@ extern ktime_t tick_nohz_get_sleep_length(void);
 extern u64 get_cpu_idle_time_us(int cpu, u64 *last_update_time);
 extern u64 get_cpu_iowait_time_us(int cpu, u64 *last_update_time);
 # else
-static inline void tick_nohz_idle_enter(void) { }
-static inline void tick_nohz_idle_exit(void) { }
+static inline void tick_nohz_idle_enter(void)
+{
+	rcu_idle_enter();
+}
+static inline void tick_nohz_idle_exit(void)
+{
+	rcu_idle_exit();
+}
 
 static inline ktime_t tick_nohz_get_sleep_length(void)
 {

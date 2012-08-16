@@ -96,12 +96,10 @@ void cpu_idle(void)
 
 	while(1) {
 		tick_nohz_idle_enter();
-		rcu_idle_enter();
 
 		while (!need_resched() && !cpu_is_offline(cpu))
 			sparc64_yield(cpu);
 
-		rcu_idle_exit();
 		tick_nohz_idle_exit();
 
 		preempt_enable_no_resched();

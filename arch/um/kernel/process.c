@@ -246,10 +246,8 @@ void default_idle(void)
 			schedule();
 
 		tick_nohz_idle_enter();
-		rcu_idle_enter();
 		nsecs = disable_timer();
 		idle_sleep(nsecs);
-		rcu_idle_exit();
 		tick_nohz_idle_exit();
 	}
 }

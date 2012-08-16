@@ -278,6 +278,7 @@ EXPORT_SYMBOL_GPL(get_cpu_iowait_time_us);
 static void tick_nohz_stop_sched_tick(struct tick_sched *ts)
 {
 	unsigned long seq, last_jiffies, next_jiffies, delta_jiffies;
+	unsigned long rcu_delta_jiffies;
 	ktime_t last_update, expires, now;
 	struct clock_event_device *dev = __get_cpu_var(tick_cpu_device).evtdev;
 	u64 time_delta;
@@ -454,12 +455,9 @@ out:
  *
  * When the next event is more than a tick into the future, stop the idle tick
  * Called when we start the idle loop.
- *
- * The arch is responsible of calling:
- *
- * - rcu_idle_enter() after its last use of RCU before the CPU is put
- *  to sleep.
- * - rcu_idle_exit() before the first use of RCU after the CPU is woken up.
+ * This also enters into RCU extended quiescent state so that this CPU doesn't
+ * need anymore to be part of any global grace period completion. This way
+ * the tick can be stopped safely as we don't need to report quiescent states.
  */
 void tick_nohz_idle_enter(void)
 {
@@ -477,6 +475,7 @@ void tick_nohz_idle_enter(void)
 	 */
 	ts->inidle = 1;
 	tick_nohz_stop_sched_tick(ts);
+	rcu_idle_enter();
 
 	local_irq_enable();
 }

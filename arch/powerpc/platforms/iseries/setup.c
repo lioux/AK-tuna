@@ -563,7 +563,6 @@ static void iseries_shared_idle(void)
 {
 	while (1) {
 		tick_nohz_idle_enter();
-		rcu_idle_enter();
 		while (!need_resched() && !hvlpevent_is_pending()) {
 			local_irq_disable();
 			ppc64_runlatch_off();
@@ -577,7 +576,6 @@ static void iseries_shared_idle(void)
 		}
 
 		ppc64_runlatch_on();
-		rcu_idle_exit();
 		tick_nohz_idle_exit();
 
 		if (hvlpevent_is_pending())
@@ -595,7 +593,6 @@ static void iseries_dedicated_idle(void)
 
 	while (1) {
 		tick_nohz_idle_enter();
-		rcu_idle_enter();
 		if (!need_resched()) {
 			while (!need_resched()) {
 				ppc64_runlatch_off();
@@ -612,7 +609,6 @@ static void iseries_dedicated_idle(void)
 		}
 
 		ppc64_runlatch_on();
-		rcu_idle_exit();
 		tick_nohz_idle_exit();
 		preempt_enable_no_resched();
 		schedule();
