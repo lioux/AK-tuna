@@ -521,10 +521,10 @@ static inline void rcu_preempt_sleep_check(void)
 		(_________p1); \
 	})
 #define __rcu_assign_pointer(p, v, space) \
-	({ \
+	do { \
 		smp_wmb(); \
 		(p) = (typeof(*v) __force space *)(v); \
-	})
+	} while (0)
 
 
 /**
@@ -911,7 +911,9 @@ static inline notrace void rcu_read_unlock_sched_notrace(void)
  * the reader-accessible portions of the linked structure.
  */
 #define RCU_INIT_POINTER(p, v) \
-		p = (typeof(*v) __force __rcu *)(v)
+	do { \
+		p = (typeof(*v) __force __rcu *)(v); \
+	} while (0)
 
 static __always_inline bool __is_kfree_rcu_offset(unsigned long offset)
 {
