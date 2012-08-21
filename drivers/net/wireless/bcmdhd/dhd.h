@@ -24,7 +24,7 @@
  * software in any way with any other Broadcom software provided under a license
  * other than the GPL, without Broadcom's express prior written consent.
  *
- * $Id: dhd.h 347624 2012-07-27 10:49:56Z $
+ * $Id: dhd.h 350938 2012-08-16 07:16:25Z $
  */
 
 /****************
@@ -76,11 +76,12 @@ enum dhd_bus_state {
 #define STA_MASK			0x0001
 #define HOSTAPD_MASK		0x0002
 #define WFD_MASK			0x0004
-#define SOFTAP_FW_MASK	0x0008
+#define SOFTAP_FW_MASK		0x0008
 #define	CONCURRENT_FW_MASK	(STA_MASK | WFD_MASK)
 #define P2P_GO_ENABLED		0x0010
 #define P2P_GC_ENABLED		0x0020
 #define CONCURENT_MASK		0x00F0
+#define CONCURRENT_MULTI_CHAN	0x0100
 #define MANUFACTRING_FW 	"WLTEST"
 
 /* max sequential rxcntl timeouts to set HANG event */
@@ -277,7 +278,7 @@ typedef struct dhd_pub {
 			SMP_RD_BARRIER_DEPENDS(); \
 			while (dhd_mmc_suspend && retry++ != b) { \
 				SMP_RD_BARRIER_DEPENDS(); \
-				wait_event_interruptible_timeout(a, !dhd_mmc_suspend, HZ/100); \
+				wait_event_interruptible_timeout(a, !dhd_mmc_suspend, 1); \
 			} \
 		} 	while (0)
 	#define DHD_PM_RESUME_WAIT(a) 		_DHD_PM_RESUME_WAIT(a, 200)
@@ -289,7 +290,7 @@ typedef struct dhd_pub {
 	#define SPINWAIT_SLEEP(a, exp, us) do { \
 		uint countdown = (us) + 9999; \
 		while ((exp) && (countdown >= 10000)) { \
-			wait_event_interruptible_timeout(a, FALSE, HZ/100); \
+			wait_event_interruptible_timeout(a, FALSE, 1); \
 			countdown -= 10000; \
 		} \
 	} while (0)
