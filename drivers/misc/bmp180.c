@@ -225,8 +225,8 @@ static int bmp180_get_raw_pressure(struct bmp180_data *barom,
 
 static void bmp180_get_pressure_data(struct work_struct *work)
 {
-	u16 raw_temperature;
-	u32 raw_pressure;
+	u16 uninitialized_var(raw_temperature);
+	u32 uninitialized_var(raw_pressure);
 	long x1, x2, x3, b3, b5, b6;
 	unsigned long b4, b7;
 	long p;
