@@ -1251,7 +1251,7 @@ static struct attribute_group tuna_board_prop_attr_group = {
 static void __init omap4_tuna_create_board_props(void)
 {
 	struct kobject *board_props_kobj;
-	struct kobject *soc_kobj;
+	struct kobject *uninitialized_var(soc_kobj);
 	int ret = 0;
 
 	board_props_kobj = kobject_create_and_add("board_properties", NULL);
