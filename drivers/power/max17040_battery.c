@@ -367,8 +367,8 @@ static void max17040_charger_update(struct max17040_chip *chip)
 			cur_time.tv_sec + chip->pdata->limit_charging_time;
 	}
 
-	dev_dbg(&chip->client->dev, "%s, Charger Status : %d, Limit Time : %ld\n",
-			__func__, chip->charger_status, chip->chg_limit_time);
+	/* dev_dbg(&chip->client->dev, "%s, Charger Status : %d, Limit Time : %ld\n",
+			__func__, chip->charger_status, chip->chg_limit_time); */
 }
 
 static void max17040_update(struct max17040_chip *chip)
