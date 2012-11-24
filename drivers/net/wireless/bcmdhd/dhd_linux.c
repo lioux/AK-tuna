@@ -4194,13 +4194,11 @@ void dhd_detach(dhd_pub_t *dhdp)
 	if (dhd->dhd_state & DHD_ATTACH_STATE_WAKELOCKS_INIT) {
 #ifdef CONFIG_HAS_WAKELOCK
 		dhd->wakelock_counter = 0;
-		dhd->wakelock_wd_counter = 0;
 		dhd->wakelock_rx_timeout_enable = 0;
 		dhd->wakelock_ctrl_timeout_enable = 0;
 		wake_lock_destroy(&dhd->wl_wifi);
 		wake_lock_destroy(&dhd->wl_rxwake);
 		wake_lock_destroy(&dhd->wl_ctrlwake);
-		wake_lock_destroy(&dhd->wl_wdwake);
 #endif /* CONFIG_HAS_WAKELOCK */
 	}
 }
@@ -4457,9 +4455,6 @@ dhd_os_wd_timer(void *bus, uint wdtick)
 
 	if (!dhd)
 		return;
-
-	if (wdtick)
-		DHD_OS_WD_WAKE_LOCK(pub);
 
 	flags = dhd_os_spin_lock(pub);
 
