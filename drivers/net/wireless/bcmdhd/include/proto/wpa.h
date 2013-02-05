@@ -30,12 +30,7 @@
 #include <typedefs.h>
 #include <proto/ethernet.h>
 
-
-
 #include <packed_section_start.h>
-
-
-
 
 #define DOT11_RC_INVALID_WPA_IE		13	
 #define DOT11_RC_MIC_FAILURE		14	
