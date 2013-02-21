@@ -1679,15 +1679,11 @@ dhd_get_suspend_bcn_li_dtim(dhd_pub_t *dhd)
 	/* check if sta listen interval fits into AP dtim */
 	if (dtim_assoc > LISTEN_INTERVAL) {
 		/* AP DTIM to big for our Listen Interval : no dtim skiping */
+		bcn_li_dtim = 1;
 		DHD_ERROR(("%s DTIM=%d > Listen=%d : too big ...\n",
 			__FUNCTION__, dtim_assoc, LISTEN_INTERVAL));
 		goto exit;
 	}
-
-	if ((dhd->dtim_skip == 0) || (dhd->dtim_skip == 1))
-		bcn_li_dtim = 3;
-	else
-		bcn_li_dtim = dhd->dtim_skip;
 
 	if ((bcn_li_dtim * dtim_assoc) > LISTEN_INTERVAL) {
 		/* Round up dtim_skip to fit into STAs Listen Interval */

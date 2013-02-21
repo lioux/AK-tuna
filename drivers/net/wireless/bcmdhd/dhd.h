@@ -698,14 +698,9 @@ extern uint dhd_pktgen_len;
 #define MAX_PKTGEN_LEN 1800
 #endif
 
-/* hooks for custom glom setting option via Makefile */
-#define DEFAULT_GLOM_VALUE 	-1
-#ifndef CUSTOM_GLOM_SETTING
-#define CUSTOM_GLOM_SETTING 	DEFAULT_GLOM_VALUE
-#endif
 
 /* hooks for custom Roaming Trigger  setting via Makefile */
-#define DEFAULT_ROAM_TRIGGER_VALUE -65 /* dBm default roam trigger all band */
+#define DEFAULT_ROAM_TRIGGER_VALUE -75 /* dBm default roam trigger all band */
 #define DEFAULT_ROAM_TRIGGER_SETTING 	-1
 #ifndef CUSTOM_ROAM_TRIGGER_SETTING
 #define CUSTOM_ROAM_TRIGGER_SETTING 	DEFAULT_ROAM_TRIGGER_VALUE
