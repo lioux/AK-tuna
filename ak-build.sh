@@ -45,7 +45,7 @@ else
   #
   # LOCAL KERNEL VERSION
   #
-  ak_ver="ak.38.Cylon"; export LOCALVERSION="~"`echo $ak_ver`
+  ak_ver="ak.422.30X.Base"; export LOCALVERSION="~"`echo $ak_ver`
 
   debug=0
 
