@@ -85,13 +85,13 @@ make CROSS_COMPILE=${HOME}/android/AK-linaro/4.6.x-google/bin/arm-eabi- ARCH=arm
 # FOR MERGE WITH RAMDISK
 #
 cp -vr arch/arm/boot/zImage ../AK-ramdisk/
-cd ../AK-ramdisk/ramdisk-4.2/
+cd ../AK-ramdisk/ramdisk-4.2.2/
 chmod 750 init* charger
 chmod 644 default.prop
 chmod 640 fstab.tuna
 chmod 644 ueventd*
 cd ..
-./repack-bootimg.pl zImage ramdisk-4.2/ boot.img
+./repack-bootimg.pl zImage ramdisk-4.2.2/ boot.img
 cp -vr boot.img cwm/
 
 #
