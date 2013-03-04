@@ -32,6 +32,17 @@ modules.builtin
 *.lzo
 *.patch
 *.gcno
+*.log
+ashldi3.S
+piggy.xzkern
+piggy.xzkern.S
+arch/arm/boot/compressed/ashldi3.S
+arch/arm/boot/compressed/piggy.xzkern
+mkboot
+zip
+
+# build dir
+build/
 
 #
 # Top-level generic files
@@ -44,6 +55,13 @@ modules.builtin
 /System.map
 /Module.markers
 /Module.symvers
+bin/*.zip
+bin/kernel/zImage
+
+#
+# Debian directory (make deb-pkg)
+#
+/debian/
 
 #
 # git files that we don't want to ignore even it they are dot-files
