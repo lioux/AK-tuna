@@ -38,14 +38,14 @@ else
    echo ""
   rm -rfv .config; rm -rfv .config.old
    echo ""
-  make CROSS_COMPILE=${HOME}/android/AK-linaro/4.6.x-google/bin/arm-eabi- ARCH=arm tuna_defconfig
+  make CROSS_COMPILE=${HOME}/android/AK-linaro/4.6.x-google/bin/arm-eabi- ARCH=arm tuna_ak_defconfig
   #make CROSS_COMPILE=${HOME}/android/AK-Kernel/AK-linaro/4.7.2-2012.10-20121023/bin/arm-linux-gnueabihf- ARCH=arm tuna_ak_defconfig
   #make CROSS_COMPILE=${HOME}/android/AK-Kernel/AK-linaro/4.7.3-2012.12.20121218/bin/arm-linux-gnueabihf- ARCH=arm tuna_ak_defconfig
   #make CROSS_COMPILE=${HOME}/android/AK-linaro/4.7.3-2013.02.20130221/bin/arm-linux-gnueabihf- ARCH=arm tuna_ak_defconfig
   #
   # LOCAL KERNEL VERSION
   #
-  ak_ver="ak.422.30X.Base"; export LOCALVERSION="~"`echo $ak_ver`
+  ak_ver="AK.001.CYLON"; export LOCALVERSION="~"`echo $ak_ver`
 
   debug=0
 
@@ -108,7 +108,7 @@ fi
 mv `echo $ak_ver`.zip ../zip/
 rm -rf `echo $ak_ver`.zip boot.img
 cd ..
-cd ../AK-cylon-3.4/
+cd ../AK-Cylon/
 
 echo .
 echo ..
