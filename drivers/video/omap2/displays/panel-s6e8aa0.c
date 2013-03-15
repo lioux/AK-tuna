@@ -71,7 +71,7 @@ enum {
 #define DEVICE_NAME "s6e8aa0_i2c"
 
 /* contrast tweak from morfic - Trinity Kernel */
-static int contrast = -5;
+static int contrast = -3;
 module_param(contrast, int, 0755);
 EXPORT_SYMBOL(contrast);
 
@@ -81,7 +81,7 @@ static int s6e8aa0_update(struct omap_dss_device *dssdev,
 static struct omap_video_timings s6e8aa0_timings = {
 	.x_res = 720,
 	.y_res = 1280,
-	.pixel_clock = 79494,
+	.pixel_clock = 80842,
 	.hfp = 158,
 	.hsw = 2,
 	.hbp = 160,
@@ -768,7 +768,7 @@ static void s6e8aa0_setup_gamma_regs(struct s6e8aa0_data *s6, u8 gamma_regs[],
 
 		v[V1] = s6e8aa0_gamma_lookup(s6, brightness, bv->v1, c);
 		offset = s6->gamma_reg_offsets.v[1][c][V1];
-		offset = offset - min(max(contrast, -32), 16);
+        offset = offset - min(max(contrast, -32), 24);
 		adj_max = min(V1_ADJ_MAX, V1_ADJ_MAX - offset);
 		adj_min = max(0, 0 - offset);
 		adj = v1_to_v1adj(v[V1], v0) - offset;
