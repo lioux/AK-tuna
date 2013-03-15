@@ -38,10 +38,10 @@ else
    echo ""
   rm -rfv .config; rm -rfv .config.old
    echo ""
-  make CROSS_COMPILE=${HOME}/android/AK-linaro/4.6.x-google/bin/arm-eabi- ARCH=arm tuna_ak_defconfig
+  #make CROSS_COMPILE=${HOME}/android/AK-linaro/4.6.x-google/bin/arm-eabi- ARCH=arm tuna_ak_defconfig
   #make CROSS_COMPILE=${HOME}/android/AK-Kernel/AK-linaro/4.7.2-2012.10-20121023/bin/arm-linux-gnueabihf- ARCH=arm tuna_ak_defconfig
   #make CROSS_COMPILE=${HOME}/android/AK-Kernel/AK-linaro/4.7.3-2012.12.20121218/bin/arm-linux-gnueabihf- ARCH=arm tuna_ak_defconfig
-  #make CROSS_COMPILE=${HOME}/android/AK-linaro/4.7.3-2013.02.20130221/bin/arm-linux-gnueabihf- ARCH=arm tuna_ak_defconfig
+  make CROSS_COMPILE=${HOME}/android/AK-linaro/4.7.3-2013.02.20130221/bin/arm-linux-gnueabihf- ARCH=arm tuna_ak_defconfig
   #
   # LOCAL KERNEL VERSION
   #
@@ -54,10 +54,10 @@ fi
 #
 # CROSS COMPILE KERNEL MODULES
 #
-make CROSS_COMPILE=${HOME}/android/AK-linaro/4.6.x-google/bin/arm-eabi- ARCH=arm -j4 modules
+#make CROSS_COMPILE=${HOME}/android/AK-linaro/4.6.x-google/bin/arm-eabi- ARCH=arm -j4 modules
 #make CROSS_COMPILE=${HOME}/android/AK-Kernel/AK-linaro/4.7.2-2012.10-20121023/bin/arm-linux-gnueabihf- ARCH=arm -j4 modules
 #make CROSS_COMPILE=${HOME}/android/AK-Kernel/AK-linaro/4.7.3-2012.12.20121218/bin/arm-linux-gnueabihf- ARCH=arm -j4 modules
-#make CROSS_COMPILE=${HOME}/android/AK-linaro/4.7.3-2013.02.20130221/bin/arm-linux-gnueabihf- ARCH=arm -j4 modules
+make CROSS_COMPILE=${HOME}/android/AK-linaro/4.7.3-2013.02.20130221/bin/arm-linux-gnueabihf- ARCH=arm -j4 modules
 
 #
 # FIND .KO MODULE CREATE WITH CROSS COMPILE
@@ -65,33 +65,33 @@ make CROSS_COMPILE=${HOME}/android/AK-linaro/4.6.x-google/bin/arm-eabi- ARCH=arm
 #
 echo ""
 rm -rfv ${HOME}/android/AK-ramdisk/cwm/system/lib/modules/*
-find ${HOME}/android/AK-cylon-3.4/ -name '*.ko' -exec cp -v {} ${HOME}/android/AK-ramdisk/cwm/system/lib/modules \;
-${HOME}/android/AK-linaro/4.6.x-google/bin/arm-eabi-strip --strip-debug ${HOME}/android/AK-ramdisk/cwm/system/lib/modules/*.ko
+find ${HOME}/android/AK-cylon/ -name '*.ko' -exec cp -v {} ${HOME}/android/AK-ramdisk/cwm/system/lib/modules \;
+#${HOME}/android/AK-linaro/4.6.x-google/bin/arm-eabi-strip --strip-debug ${HOME}/android/AK-ramdisk/cwm/system/lib/modules/*.ko
 #${HOME}/android/AK-Kernel/AK-linaro/4.7.2-2012.10-20121023/bin/arm-linux-gnueabihf-strip --strip-debug ${HOME}/android/AK-Kernel/AK-ramdisk/cwm/system/lib/modules/*.ko
 #${HOME}/android/AK-Kernel/AK-linaro/4.7.3-2012.12.20121218/bin/arm-linux-gnueabihf-strip --strip-debug ${HOME}/android/AK-Kernel/AK-ramdisk/cwm/system/lib/modules/*.ko
-#${HOME}/android/AK-linaro/4.7.3-2013.02.20130221/bin/arm-linux-gnueabihf-strip --strip-debug ${HOME}/android/AK-ramdisk/cwm/system/lib/modules/*.ko
+${HOME}/android/AK-linaro/4.7.3-2013.02.20130221/bin/arm-linux-gnueabihf-strip --strip-debug ${HOME}/android/AK-ramdisk/cwm/system/lib/modules/*.ko
 echo ""
 
 #
 # CROSS COMPILE KERNEL WITH TOOLCHAIN
 #
-make CROSS_COMPILE=${HOME}/android/AK-linaro/4.6.x-google/bin/arm-eabi- ARCH=arm -j4 zImage
+#make CROSS_COMPILE=${HOME}/android/AK-linaro/4.6.x-google/bin/arm-eabi- ARCH=arm -j4 zImage
 #make CROSS_COMPILE=${HOME}/android/AK-Kernel/AK-linaro/4.7.2-2012.10-20121023/bin/arm-linux-gnueabihf- ARCH=arm -j4 zImage
 #make CROSS_COMPILE=${HOME}/android/AK-Kernel/AK-linaro/4.7.3-2012.12.20121218/bin/arm-linux-gnueabihf- ARCH=arm -j4 zImage
-#make CROSS_COMPILE=${HOME}/android/AK-linaro/4.7.3-2013.02.20130221/bin/arm-linux-gnueabihf- ARCH=arm -j4 zImage
+make CROSS_COMPILE=${HOME}/android/AK-linaro/4.7.3-2013.02.20130221/bin/arm-linux-gnueabihf- ARCH=arm -j4 zImage
 
 #
 # COPY ZIMAGE OF KERNEL
 # FOR MERGE WITH RAMDISK
 #
 cp -vr arch/arm/boot/zImage ../AK-ramdisk/
-cd ../AK-ramdisk/ramdisk-4.2.2/
+cd ../AK-ramdisk/ramdisk-4.2/
 chmod 750 init* charger
 chmod 644 default.prop
 chmod 640 fstab.tuna
 chmod 644 ueventd*
 cd ..
-./repack-bootimg.pl zImage ramdisk-4.2.2/ boot.img
+./repack-bootimg.pl zImage ramdisk-4.2/ boot.img
 cp -vr boot.img cwm/
 
 #
@@ -108,7 +108,7 @@ fi
 mv `echo $ak_ver`.zip ../zip/
 rm -rf `echo $ak_ver`.zip boot.img
 cd ..
-cd ../AK-Cylon/
+cd ../AK-cylon/
 
 echo .
 echo ..
