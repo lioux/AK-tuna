@@ -4536,7 +4536,6 @@ dhd_os_wd_timer(void *bus, uint wdtick)
 	}
 
 	if (wdtick) {
-		DHD_OS_WD_WAKE_LOCK(pub);
 		dhd_watchdog_ms = (uint)wdtick;
 		/* Re arm the timer, at last watchdog period */
 		mod_timer(&dhd->timer, jiffies + msecs_to_jiffies(dhd_watchdog_ms));
