@@ -65,7 +65,7 @@ make CROSS_COMPILE=${HOME}/android/AK-linaro/4.7.3-2013.02.20130221/bin/arm-linu
 #
 echo ""
 rm -rfv ${HOME}/android/AK-ramdisk/cwm/system/lib/modules/*
-find ${HOME}/android/AK-cylon/ -name '*.ko' -exec cp -v {} ${HOME}/android/AK-ramdisk/cwm/system/lib/modules \;
+find ${HOME}/android/AK-tuna/ -name '*.ko' -exec cp -v {} ${HOME}/android/AK-ramdisk/cwm/system/lib/modules \;
 #${HOME}/android/AK-linaro/4.6.x-google/bin/arm-eabi-strip --strip-debug ${HOME}/android/AK-ramdisk/cwm/system/lib/modules/*.ko
 #${HOME}/android/AK-Kernel/AK-linaro/4.7.2-2012.10-20121023/bin/arm-linux-gnueabihf-strip --strip-debug ${HOME}/android/AK-Kernel/AK-ramdisk/cwm/system/lib/modules/*.ko
 #${HOME}/android/AK-Kernel/AK-linaro/4.7.3-2012.12.20121218/bin/arm-linux-gnueabihf-strip --strip-debug ${HOME}/android/AK-Kernel/AK-ramdisk/cwm/system/lib/modules/*.ko
@@ -108,7 +108,7 @@ fi
 mv `echo $ak_ver`.zip ../zip/
 rm -rf `echo $ak_ver`.zip boot.img
 cd ..
-cd ../AK-cylon/
+cd ../AK-tuna/
 
 echo .
 echo ..
