@@ -8,6 +8,9 @@ clear
 PARAM=$1
 DATE_START=$(date +"%s")
 CWM_MOVE="/home/anarkia/Scrivania/"
+TOOLCHAIN_LINARO="${HOME}/android/AK-linaro/4.7.3-2013.03.20130313/bin/arm-linux-gnueabihf-"
+TOOLCHAIN_GOOGLE="${HOME}/android/AK-linaro/4.6.x-google/bin/arm-eabi-"
+TOOLCHAIN_STRIP="${HOME}/android/AK-linaro/4.7.3-2013.03.20130313/bin/arm-linux-gnueabihf-strip"
 
 if [ "${PARAM}" == "debug" ]; then
  echo ""; echo "# AK BUILD DEBUG ------------------------------------------------------------------------------------------------"; echo ""
@@ -18,14 +21,13 @@ if [ "${PARAM}" == "debug" ]; then
    echo ""
   rm -rfv .config; rm -rfv .config.old
    echo ""
-  make CROSS_COMPILE=${HOME}/android/AK-linaro/4.6.x-google/bin/arm-eabi- ARCH=arm tuna_ak_debug_defconfig
-  #make CROSS_COMPILE=${HOME}/android/AK-Kernel/AK-linaro/4.6.x-google/bin/arm-eabi- ARCH=arm tuna_ak_debug_defconfig
-  #make CROSS_COMPILE=${HOME}/android/AK-Kernel/AK-linaro/4.7.3-2012.12.20121218/bin/arm-linux-gnueabihf- ARCH=arm tuna_ak_debug_defconfig
-  #make CROSS_COMPILE=${HOME}/android/AK-linaro/4.7.3-2013.02.20130221/bin/arm-linux-gnueabihf- ARCH=arm tuna_ak_debug_defconfig
+  make CROSS_COMPILE=$TOOLCHAIN_GOOGLE ARCH=arm tuna_ak_debug_defconfig
+  #make CROSS_COMPILE=$TOOLCHAIN_LINARO ARCH=arm tuna_ak_debug_defconfig
+
   #
   # LOCAL KERNEL VERSION
   #
-  ak_ver="ak.666.debug"; export LOCALVERSION="~"`echo $ak_ver`
+  ak_ver="AK.666.DEBUG"; export LOCALVERSION="~"`echo $ak_ver`
 
   debug=1
 
@@ -38,10 +40,9 @@ else
    echo ""
   rm -rfv .config; rm -rfv .config.old
    echo ""
-  #make CROSS_COMPILE=${HOME}/android/AK-linaro/4.6.x-google/bin/arm-eabi- ARCH=arm tuna_ak_defconfig
-  #make CROSS_COMPILE=${HOME}/android/AK-Kernel/AK-linaro/4.7.2-2012.10-20121023/bin/arm-linux-gnueabihf- ARCH=arm tuna_ak_defconfig
-  #make CROSS_COMPILE=${HOME}/android/AK-Kernel/AK-linaro/4.7.3-2012.12.20121218/bin/arm-linux-gnueabihf- ARCH=arm tuna_ak_defconfig
-  make CROSS_COMPILE=${HOME}/android/AK-linaro/4.7.3-2013.02.20130221/bin/arm-linux-gnueabihf- ARCH=arm tuna_ak_defconfig
+  #make CROSS_COMPILE=$TOOLCHAIN_GOOGLE ARCH=arm tuna_ak_defconfig
+  make CROSS_COMPILE=$TOOLCHAIN_LINARO ARCH=arm tuna_ak_defconfig
+
   #
   # LOCAL KERNEL VERSION
   #
@@ -54,10 +55,8 @@ fi
 #
 # CROSS COMPILE KERNEL MODULES
 #
-#make CROSS_COMPILE=${HOME}/android/AK-linaro/4.6.x-google/bin/arm-eabi- ARCH=arm -j4 modules
-#make CROSS_COMPILE=${HOME}/android/AK-Kernel/AK-linaro/4.7.2-2012.10-20121023/bin/arm-linux-gnueabihf- ARCH=arm -j4 modules
-#make CROSS_COMPILE=${HOME}/android/AK-Kernel/AK-linaro/4.7.3-2012.12.20121218/bin/arm-linux-gnueabihf- ARCH=arm -j4 modules
-make CROSS_COMPILE=${HOME}/android/AK-linaro/4.7.3-2013.02.20130221/bin/arm-linux-gnueabihf- ARCH=arm -j4 modules
+#make CROSS_COMPILE=$TOOLCHAIN_GOOGLE ARCH=arm -j4 modules
+make CROSS_COMPILE=$TOOLCHAIN_LINARO ARCH=arm -j4 modules
 
 #
 # FIND .KO MODULE CREATE WITH CROSS COMPILE
@@ -66,19 +65,14 @@ make CROSS_COMPILE=${HOME}/android/AK-linaro/4.7.3-2013.02.20130221/bin/arm-linu
 echo ""
 rm -rfv ${HOME}/android/AK-ramdisk/cwm/system/lib/modules/*
 find ${HOME}/android/AK-tuna/ -name '*.ko' -exec cp -v {} ${HOME}/android/AK-ramdisk/cwm/system/lib/modules \;
-#${HOME}/android/AK-linaro/4.6.x-google/bin/arm-eabi-strip --strip-debug ${HOME}/android/AK-ramdisk/cwm/system/lib/modules/*.ko
-#${HOME}/android/AK-Kernel/AK-linaro/4.7.2-2012.10-20121023/bin/arm-linux-gnueabihf-strip --strip-debug ${HOME}/android/AK-Kernel/AK-ramdisk/cwm/system/lib/modules/*.ko
-#${HOME}/android/AK-Kernel/AK-linaro/4.7.3-2012.12.20121218/bin/arm-linux-gnueabihf-strip --strip-debug ${HOME}/android/AK-Kernel/AK-ramdisk/cwm/system/lib/modules/*.ko
-${HOME}/android/AK-linaro/4.7.3-2013.02.20130221/bin/arm-linux-gnueabihf-strip --strip-debug ${HOME}/android/AK-ramdisk/cwm/system/lib/modules/*.ko
+$TOOLCHAIN_STRIP --strip-debug ${HOME}/android/AK-ramdisk/cwm/system/lib/modules/*.ko
 echo ""
 
 #
 # CROSS COMPILE KERNEL WITH TOOLCHAIN
 #
-#make CROSS_COMPILE=${HOME}/android/AK-linaro/4.6.x-google/bin/arm-eabi- ARCH=arm -j4 zImage
-#make CROSS_COMPILE=${HOME}/android/AK-Kernel/AK-linaro/4.7.2-2012.10-20121023/bin/arm-linux-gnueabihf- ARCH=arm -j4 zImage
-#make CROSS_COMPILE=${HOME}/android/AK-Kernel/AK-linaro/4.7.3-2012.12.20121218/bin/arm-linux-gnueabihf- ARCH=arm -j4 zImage
-make CROSS_COMPILE=${HOME}/android/AK-linaro/4.7.3-2013.02.20130221/bin/arm-linux-gnueabihf- ARCH=arm -j4 zImage
+#make CROSS_COMPILE=$TOOLCHAIN_GOOGLE ARCH=arm -j4 zImage
+make CROSS_COMPILE=$TOOLCHAIN_LINARO ARCH=arm -j4 zImage
 
 #
 # COPY ZIMAGE OF KERNEL
