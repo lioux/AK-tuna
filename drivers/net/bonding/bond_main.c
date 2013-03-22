@@ -99,6 +99,7 @@ static char *mode;
 static char *primary;
 static char *primary_reselect;
 static char *lacp_rate;
+static int min_links;
 static char *ad_select;
 static char *xmit_hash_policy;
 static int arp_interval = BOND_LINK_ARP_INTERV;
@@ -151,6 +152,9 @@ module_param(ad_select, charp, 0);
 MODULE_PARM_DESC(ad_select, "803.ad aggregation selection logic; "
 			    "0 for stable (default), 1 for bandwidth, "
 			    "2 for count");
+module_param(min_links, int, 0);
+MODULE_PARM_DESC(min_links, "Minimum number of available links before turning on carrier");
+
 module_param(xmit_hash_policy, charp, 0);
 MODULE_PARM_DESC(xmit_hash_policy, "balance-xor and 802.3ad hashing method; "
 				   "0 for layer 2 (default), 1 for layer 3+4, "
@@ -329,16 +333,6 @@ static int bond_del_vlan(struct bonding *bond, unsigned short vlan_id)
 				 vlan_id, bond->dev->name);
 
 			kfree(vlan);
-
-			if (list_empty(&bond->vlan_list) &&
-			    (bond->slave_cnt == 0)) {
-				/* Last VLAN removed and no slaves, so
-				 * restore block on adding VLANs. This will
-				 * be removed once new slaves that are not
-				 * VLAN challenged will be added.
-				 */
-				bond->dev->features |= NETIF_F_VLAN_CHALLENGED;
-			}
 
 			res = 0;
 			goto out;
@@ -635,15 +629,8 @@ static int bond_update_speed_duplex(struct slave *slave)
 		return -1;
 
 	slave_speed = ethtool_cmd_speed(&etool);
-	switch (slave_speed) {
-	case SPEED_10:
-	case SPEED_100:
-	case SPEED_1000:
-	case SPEED_10000:
-		break;
-	default:
+	if (slave_speed == 0 || slave_speed == ((__u32) -1))
 		return -1;
-	}
 
 	switch (etool.duplex) {
 	case DUPLEX_FULL:
@@ -1869,8 +1856,7 @@ int bond_enslave(struct net_device *bond_dev, struct net_device *slave_dev)
 			/* Initialize AD with the number of times that the AD timer is called in 1 second
 			 * can be called only after the mac address of the bond is set
 			 */
-			bond_3ad_initialize(bond, 1000/AD_TIMER_INTERVAL,
-					    bond->params.lacp_fast);
+			bond_3ad_initialize(bond, 1000/AD_TIMER_INTERVAL);
 		} else {
 			SLAVE_AD_INFO(new_slave).id =
 				SLAVE_AD_INFO(new_slave->prev).id + 1;
@@ -4838,6 +4824,7 @@ static int bond_check_params(struct bond_params *params)
 	params->tx_queues = tx_queues;
 	params->all_slaves_active = all_slaves_active;
 	params->resend_igmp = resend_igmp;
+	params->min_links = min_links;
 
 	if (primary) {
 		strncpy(params->primary, primary, IFNAMSIZ);

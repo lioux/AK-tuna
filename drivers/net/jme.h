@@ -24,6 +24,7 @@
 
 #ifndef __JME_H_INCLUDED__
 #define __JME_H_INCLUDED__
+#include <linux/interrupt.h>
 
 #define DRV_NAME	"jme"
 #define DRV_VERSION	"1.0.8"
@@ -851,6 +852,7 @@ enum jme_ghc_txmac_clk {
  * Power management control and status register
  */
 enum jme_pmcs_bit_masks {
+	PMCS_STMASK	= 0xFFFF0000,
 	PMCS_WF7DET	= 0x80000000,
 	PMCS_WF6DET	= 0x40000000,
 	PMCS_WF5DET	= 0x20000000,
@@ -862,6 +864,7 @@ enum jme_pmcs_bit_masks {
 	PMCS_LFDET	= 0x00040000,
 	PMCS_LRDET	= 0x00020000,
 	PMCS_MFDET	= 0x00010000,
+	PMCS_ENMASK	= 0x0000FFFF,
 	PMCS_WF7EN	= 0x00008000,
 	PMCS_WF6EN	= 0x00004000,
 	PMCS_WF5EN	= 0x00002000,
