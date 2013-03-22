@@ -147,6 +147,7 @@ struct bond_params {
 	int updelay;
 	int downdelay;
 	int lacp_fast;
+	unsigned int min_links;
 	int ad_select;
 	char primary[IFNAMSIZ];
 	int primary_reselect;
@@ -240,7 +241,6 @@ struct bonding {
 	struct   bond_params params;
 	struct   list_head vlan_list;
 	struct   vlan_group *vlgrp;
-	struct   packet_type arp_mon_pt;
 	struct   workqueue_struct *wq;
 	struct   delayed_work mii_work;
 	struct   delayed_work arp_work;
