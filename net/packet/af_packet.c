@@ -1668,6 +1668,8 @@ static int packet_release(struct socket *sock)
 
 	fanout_release(sk);
 
+	fanout_release(sk);
+
 	synchronize_net();
 	/*
 	 *	Now the socket is dead. No more input will appear.
