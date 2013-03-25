@@ -366,6 +366,13 @@ config OMAP_ALLOW_OSWR
 	  Which means the Logic of power domains can be lost now
 	  unlike the CSWR wherein the logic is retained
 
+config OPP4_UNDERVOLT
+	bool "Enable undervolting on OMAP"
+	depends on !OMAP_SMARTREFLEX_CLASS1P5
+	default n
+	help
+	  Enable undervolting on OMAP
+
 config OMAP_C4_MPUOSWR
 	bool  "Enable Open Switch Retention in the C4 state for the MPU"
 	depends on OMAP_ALLOW_OSWR
