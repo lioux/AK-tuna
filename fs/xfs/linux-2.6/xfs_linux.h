@@ -33,6 +33,7 @@
 #endif
 
 #include <xfs_types.h>
+#include <xfs_arch.h>
 
 #include <kmem.h>
 #include <mrlock.h>
@@ -88,12 +89,6 @@
 #include <xfs_super.h>
 #include <xfs_buf.h>
 #include <xfs_message.h>
-
-#ifdef __BIG_ENDIAN
-#define XFS_NATIVE_HOST 1
-#else
-#undef XFS_NATIVE_HOST
-#endif
 
 /*
  * Feature macros (disable/enable)

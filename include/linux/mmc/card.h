@@ -405,4 +405,4 @@ extern void mmc_fixup_device(struct mmc_card *card,
 			     const struct mmc_fixup *table);
 extern void mmc_fixup_samsung_fw(struct mmc_card *card);
 
-#endif /* LINUX_MMC_CARD_H */
+#endif

@@ -614,14 +614,16 @@ static int sdhci_s3c_suspend(struct platform_device *dev, pm_message_t pm)
 {
 	struct sdhci_host *host = platform_get_drvdata(dev);
 
-	return sdhci_suspend_host(host, pm);
+	sdhci_suspend_host(host, pm);
+	return 0;
 }
 
 static int sdhci_s3c_resume(struct platform_device *dev)
 {
 	struct sdhci_host *host = platform_get_drvdata(dev);
 
-	return sdhci_resume_host(host);
+	sdhci_resume_host(host);
+	return 0;
 }
 
 #else

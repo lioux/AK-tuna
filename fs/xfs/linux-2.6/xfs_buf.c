@@ -499,14 +499,16 @@ found:
 	spin_unlock(&pag->pag_buf_lock);
 	xfs_perag_put(pag);
 
-	if (!xfs_buf_trylock(bp)) {
-		if (flags & XBF_TRYLOCK) {
+	if (xfs_buf_cond_lock(bp)) {
+		/* failed, so wait for the lock if requested. */
+		if (!(flags & XBF_TRYLOCK)) {
+			xfs_buf_lock(bp);
+			XFS_STATS_INC(xb_get_locked_waited);
+		} else {
 			xfs_buf_rele(bp);
 			XFS_STATS_INC(xb_busy_locked);
 			return NULL;
 		}
-		xfs_buf_lock(bp);
-		XFS_STATS_INC(xb_get_locked_waited);
 	}
 
 	/*
@@ -592,8 +594,10 @@ _xfs_buf_read(
 	ASSERT(!(flags & (XBF_DELWRI|XBF_WRITE)));
 	ASSERT(bp->b_bn != XFS_BUF_DADDR_NULL);
 
-	bp->b_flags &= ~(XBF_WRITE | XBF_ASYNC | XBF_DELWRI | XBF_READ_AHEAD);
-	bp->b_flags |= flags & (XBF_READ | XBF_ASYNC | XBF_READ_AHEAD);
+	bp->b_flags &= ~(XBF_WRITE | XBF_ASYNC | XBF_DELWRI | \
+			XBF_READ_AHEAD | _XBF_RUN_QUEUES);
+	bp->b_flags |= flags & (XBF_READ | XBF_ASYNC | \
+			XBF_READ_AHEAD | _XBF_RUN_QUEUES);
 
 	status = xfs_buf_iorequest(bp);
 	if (status || XFS_BUF_ISERROR(bp) || (flags & XBF_ASYNC))
@@ -677,6 +681,7 @@ xfs_buf_read_uncached(
 		return NULL;
 
 	/* set up the buffer for a read IO */
+	xfs_buf_lock(bp);
 	XFS_BUF_SET_ADDR(bp, daddr);
 	XFS_BUF_READ(bp);
 	XFS_BUF_BUSY(bp);
@@ -811,6 +816,8 @@ xfs_buf_get_uncached(
 		goto fail_free_mem;
 	}
 
+	xfs_buf_unlock(bp);
+
 	trace_xfs_buf_get_uncached(bp, _RET_IP_);
 	return bp;
 
@@ -889,8 +896,8 @@ xfs_buf_rele(
  *	to push on stale inode buffers.
  */
 int
-xfs_buf_trylock(
-	struct xfs_buf		*bp)
+xfs_buf_cond_lock(
+	xfs_buf_t		*bp)
 {
 	int			locked;
 
@@ -900,8 +907,15 @@ xfs_buf_trylock(
 	else if (atomic_read(&bp->b_pin_count) && (bp->b_flags & XBF_STALE))
 		xfs_log_force(bp->b_target->bt_mount, 0);
 
-	trace_xfs_buf_trylock(bp, _RET_IP_);
-	return locked;
+	trace_xfs_buf_cond_lock(bp, _RET_IP_);
+	return locked ? 0 : -EBUSY;
+}
+
+int
+xfs_buf_lock_value(
+	xfs_buf_t		*bp)
+{
+	return bp->b_sema.count;
 }
 
 /*
@@ -915,7 +929,7 @@ xfs_buf_trylock(
  */
 void
 xfs_buf_lock(
-	struct xfs_buf		*bp)
+	xfs_buf_t		*bp)
 {
 	trace_xfs_buf_lock(bp, _RET_IP_);
 
@@ -936,7 +950,7 @@ xfs_buf_lock(
  */
 void
 xfs_buf_unlock(
-	struct xfs_buf		*bp)
+	xfs_buf_t		*bp)
 {
 	if ((bp->b_flags & (XBF_DELWRI|_XBF_DELWRI_Q)) == XBF_DELWRI) {
 		atomic_inc(&bp->b_hold);
@@ -1107,7 +1121,7 @@ xfs_bioerror_relse(
 	XFS_BUF_UNDELAYWRITE(bp);
 	XFS_BUF_DONE(bp);
 	XFS_BUF_STALE(bp);
-	bp->b_iodone = NULL;
+	XFS_BUF_CLR_IODONE_FUNC(bp);
 	if (!(fl & XBF_ASYNC)) {
 		/*
 		 * Mark b_error and B_ERROR _both_.
@@ -1209,20 +1223,22 @@ _xfs_buf_ioapply(
 	total_nr_pages = bp->b_page_count;
 	map_i = 0;
 
-	if (bp->b_flags & XBF_WRITE) {
-		if (bp->b_flags & XBF_SYNCIO)
-			rw = WRITE_SYNC;
-		else
-			rw = WRITE;
-		if (bp->b_flags & XBF_FUA)
-			rw |= REQ_FUA;
-		if (bp->b_flags & XBF_FLUSH)
-			rw |= REQ_FLUSH;
-	} else if (bp->b_flags & XBF_READ_AHEAD) {
-		rw = READA;
+	if (bp->b_flags & XBF_ORDERED) {
+		ASSERT(!(bp->b_flags & XBF_READ));
+		rw = WRITE_FLUSH_FUA;
+	} else if (bp->b_flags & XBF_LOG_BUFFER) {
+		ASSERT(!(bp->b_flags & XBF_READ_AHEAD));
+		bp->b_flags &= ~_XBF_RUN_QUEUES;
+		rw = (bp->b_flags & XBF_WRITE) ? WRITE_SYNC : READ_SYNC;
+	} else if (bp->b_flags & _XBF_RUN_QUEUES) {
+		ASSERT(!(bp->b_flags & XBF_READ_AHEAD));
+		bp->b_flags &= ~_XBF_RUN_QUEUES;
+		rw = (bp->b_flags & XBF_WRITE) ? WRITE_META : READ_META;
 	} else {
-		rw = READ;
+		rw = (bp->b_flags & XBF_WRITE) ? WRITE :
+		     (bp->b_flags & XBF_READ_AHEAD) ? READA : READ;
 	}
+
 
 next_chunk:
 	atomic_inc(&bp->b_io_remaining);
@@ -1678,14 +1694,15 @@ xfs_buf_delwri_split(
 	list_for_each_entry_safe(bp, n, dwq, b_list) {
 		ASSERT(bp->b_flags & XBF_DELWRI);
 
-		if (!XFS_BUF_ISPINNED(bp) && xfs_buf_trylock(bp)) {
+		if (!XFS_BUF_ISPINNED(bp) && !xfs_buf_cond_lock(bp)) {
 			if (!force &&
 			    time_before(jiffies, bp->b_queuetime + age)) {
 				xfs_buf_unlock(bp);
 				break;
 			}
 
-			bp->b_flags &= ~(XBF_DELWRI | _XBF_DELWRI_Q);
+			bp->b_flags &= ~(XBF_DELWRI|_XBF_DELWRI_Q|
+					 _XBF_RUN_QUEUES);
 			bp->b_flags |= XBF_WRITE;
 			list_move_tail(&bp->b_list, list);
 			trace_xfs_buf_delwri_split(bp, _RET_IP_);
@@ -1719,6 +1736,14 @@ xfs_buf_cmp(
 	if (diff > 0)
 		return 1;
 	return 0;
+}
+
+void
+xfs_buf_delwri_sort(
+	xfs_buftarg_t	*target,
+	struct list_head *list)
+{
+	list_sort(NULL, list, xfs_buf_cmp);
 }
 
 STATIC int

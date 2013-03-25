@@ -385,8 +385,12 @@ xfs_quiesce_data(
 {
 	int			error, error2 = 0;
 
+	/* push non-blocking */
+	xfs_sync_data(mp, 0);
 	xfs_qm_sync(mp, SYNC_TRYLOCK);
-	xfs_qm_sync(mp, SYNC_WAIT);
+
+	/* push and block till complete */
+	xfs_sync_data(mp, SYNC_WAIT);
 
 	/*
 	 * Log all pending size and timestamp updates.  The vfs writeback
@@ -397,6 +401,8 @@ xfs_quiesce_data(
 	 * timestamp for the cut-off in the blocking phase.
 	 */
 	xfs_inode_ag_iterator(mp, xfs_log_dirty_inode, 0);
+
+	xfs_qm_sync(mp, SYNC_WAIT);
 
 	/* write superblock and hoover up shutdown errors */
 	error = xfs_sync_fsdata(mp);
@@ -467,7 +473,7 @@ xfs_quiesce_attr(
 	WARN_ON(atomic_read(&mp->m_active_trans) != 0);
 
 	/* Push the superblock and write an unmount record */
-	error = xfs_log_sbcount(mp);
+	error = xfs_log_sbcount(mp, 1);
 	if (error)
 		xfs_warn(mp, "xfs_attr_quiesce: failed to log sb changes. "
 				"Frozen image may not be consistent.");

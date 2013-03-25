@@ -1,5 +1,5 @@
 /*
- * drivers/mmc/host/at91_mci.h
+ * arch/arm/mach-at91/include/mach/at91_mci.h
  *
  * Copyright (C) 2005 Ivan Kokshaysky
  * Copyright (C) SAN People
