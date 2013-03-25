@@ -1,6 +1,6 @@
 /* cnic.c: Broadcom CNIC core network driver.
  *
- * Copyright (c) 2006-2010 Broadcom Corporation
+ * Copyright (c) 2006-2011 Broadcom Corporation
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -4785,7 +4785,7 @@ static void cnic_init_bnx2x_kcq(struct cnic_dev *dev)
 			   CSTORM_ISCSI_EQ_PROD_OFFSET(pfid, 0);
 	cp->kcq1.sw_prod_idx = 0;
 
-	if (BNX2X_CHIP_IS_E2(cp->chip_id)) {
+	if (BNX2X_CHIP_IS_E2_PLUS(cp->chip_id)) {
 		struct host_hc_status_block_e2 *sb = cp->status_blk.gen;
 
 		cp->kcq1.hw_prod_idx_ptr =
@@ -4801,7 +4801,7 @@ static void cnic_init_bnx2x_kcq(struct cnic_dev *dev)
 			&sb->sb.running_index[SM_RX_ID];
 	}
 
-	if (BNX2X_CHIP_IS_E2(cp->chip_id)) {
+	if (BNX2X_CHIP_IS_E2_PLUS(cp->chip_id)) {
 		struct host_hc_status_block_e2 *sb = cp->status_blk.gen;
 
 		cp->kcq2.io_addr = BAR_USTRORM_INTMEM +
