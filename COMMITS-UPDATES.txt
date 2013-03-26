@@ -80,3 +80,74 @@ Please, keep this information updated.
   slub: Enable backtrace for create/delete points
   slab allocators: Provide generic description of alignment defines
   slob/lockdep: Fix gfp flags passed to lockdep
+
+
+20130325:
+  NAME: Add codel (Controlled Delay AQM) and fq_codel (Fair Queue Codel
+        AQM) qdisc scheduler
+
+  Composed of the following commits in order:
+
+  ORIGIN: https://github.com/lioux/AK-tuna.git COMMIT:
+  db196621e0202f5382dc5d0baa63667d7f8c7ed8 UPSTREAM
+  NAME: net: introduce skb_flow_dissect() UPSTREAM:
+  http://git.kernel.org/cgit/linux/kernel/git/torvalds/linux.git USPTREAM
+  COMMIT: 0744dd00c1b1be99a25b62b1b48df440e82e57e0
+
+  ORIGIN: https://github.com/lioux/AK-tuna.git
+  COMMIT: bbd50be948e539a9e42fd83b4bd936a5469f10b0
+  UPSTREAM NAME: flow_dissector: use a 64bit load/store
+  UPSTREAM: http://git.kernel.org/cgit/linux/kernel/git/torvalds/linux.git
+  USPTREAM COMMIT: 4d77d2b567ec66a443792d99e96ac760991d80d0
+
+  ORIGIN: https://github.com/lioux/AK-tuna.git
+  COMMIT: 1abe81759786d6b3e78ea104283505b0f947683c
+  UPSTREAM NAME: codel: Controlled Delay AQM
+  UPSTREAM: http://git.kernel.org/cgit/linux/kernel/git/torvalds/linux.git
+  USPTREAM COMMIT: 76e3cc126bb223013a6b9a0e2a51238d1ef2e409
+
+  ORIGIN: https://github.com/lioux/AK-tuna.git
+  COMMIT: 1cd664d7b1aad210fa1324293bd2b026a9d3be86
+  UPSTREAM NAME: fq_codel: Fair Queue Codel AQM
+  UPSTREAM: http://git.kernel.org/cgit/linux/kernel/git/torvalds/linux.git
+  USPTREAM COMMIT: 4b549a2ef4bef9965d97cbd992ba67930cd3e0fe
+
+  ORIGIN: https://github.com/lioux/AK-tuna.git
+  COMMIT: d09821334344fdef49385173832f2eadc8f47dab
+  UPSTREAM NAME: codel: use Newton method instead of sqrt() and divides
+  UPSTREAM: http://git.kernel.org/cgit/linux/kernel/git/torvalds/linux.git
+  USPTREAM COMMIT: 536edd67109df5e0cdb2c4ee759e9bade7976367
+
+  ORIGIN: https://github.com/lioux/AK-tuna.git
+  COMMIT: 2b8869ca34af8cf40b5f4db8337db6b9f4b8185f
+  UPSTREAM NAME: net/codel: Add missing #include <linux/prefetch.h>
+  UPSTREAM: http://git.kernel.org/cgit/linux/kernel/git/torvalds/linux.git
+  USPTREAM COMMIT: ce5b4b977127ee20c3f9c3fd3637cd3796f649f5
+  
+  ORIGIN: https://github.com/lioux/AK-tuna.git
+  COMMIT: a643f0b46bb553b68ce2acc09e88857ce4f45887
+  UPSTREAM NAME: codel: use u16 field instead of 31bits for rec_inv_sqrt
+  UPSTREAM: http://git.kernel.org/cgit/linux/kernel/git/torvalds/linux.git
+  USPTREAM COMMIT: 6ff272c9ad65eda219cd975b9da2dbc31cc812ee
+
+  ORIGIN: https://github.com/lioux/AK-tuna.git
+  COMMIT: 7ff9eba9cd25f215b1fde4c835fbc08d4841ade7
+  UPSTREAM NAME: fq_codel: should use qdisc backlog as threshold
+  UPSTREAM: http://git.kernel.org/cgit/linux/kernel/git/torvalds/linux.git
+  USPTREAM COMMIT: 865ec5523dadbedefbc5710a68969f686a28d928
+
+  ORIGIN: https://github.com/lioux/AK-tuna.git
+  COMMIT: f8597b32f661258224428f824018e682c781200e
+  UPSTREAM NAME: codel: refine one condition to avoid a nul rec_inv_sqrt
+  UPSTREAM: http://git.kernel.org/cgit/linux/kernel/git/torvalds/linux.git
+  USPTREAM COMMIT: 2359a47671fc4fb0fe5e9945f76c2cb10792c0f8
+
+  ORIGIN: https://github.com/lioux/AK-tuna.git
+  COMMIT: c792a693a877712d0ad280ccd2f1425a8c2df695
+  UPSTREAM NAME: fq_codel: dont reinit flow state
+  UPSTREAM: http://git.kernel.org/cgit/linux/kernel/git/torvalds/linux.git
+  USPTREAM COMMIT: b379135c40163ae79ba7a54e6928b53983e74ee8
+  
+  NAME: Enable build of codel and fq_codel
+  ORIGIN: https://github.com/lioux/AK-tuna.git
+  COMMIT: e8e1ed0948026e2b813f8cfdd70df3ca39147d5e
