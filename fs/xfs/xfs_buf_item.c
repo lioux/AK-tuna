@@ -90,11 +90,13 @@ xfs_buf_item_flush_log_debug(
 	uint		first,
 	uint		last)
 {
-	xfs_buf_log_item_t	*bip = bp->b_fspriv;
+	xfs_buf_log_item_t	*bip;
 	uint			nbytes;
 
-	if (bip == NULL || (bip->bli_item.li_type != XFS_LI_BUF))
+	bip = XFS_BUF_FSPRIVATE(bp, xfs_buf_log_item_t*);
+	if ((bip == NULL) || (bip->bli_item.li_type != XFS_LI_BUF)) {
 		return;
+	}
 
 	ASSERT(bip->bli_logged != NULL);
 	nbytes = last - first + 1;
@@ -406,7 +408,7 @@ xfs_buf_item_unpin(
 	int		stale = bip->bli_flags & XFS_BLI_STALE;
 	int		freed;
 
-	ASSERT(bp->b_fspriv == bip);
+	ASSERT(XFS_BUF_FSPRIVATE(bp, xfs_buf_log_item_t *) == bip);
 	ASSERT(atomic_read(&bip->bli_refcount) > 0);
 
 	trace_xfs_buf_item_unpin(bip);
@@ -418,7 +420,7 @@ xfs_buf_item_unpin(
 
 	if (freed && stale) {
 		ASSERT(bip->bli_flags & XFS_BLI_STALE);
-		ASSERT(xfs_buf_islocked(bp));
+		ASSERT(XFS_BUF_VALUSEMA(bp) <= 0);
 		ASSERT(!(XFS_BUF_ISDELAYWRITE(bp)));
 		ASSERT(XFS_BUF_ISSTALE(bp));
 		ASSERT(bip->bli_format.blf_flags & XFS_BLF_CANCEL);
@@ -441,7 +443,7 @@ xfs_buf_item_unpin(
 			 * Since the transaction no longer refers to the buffer,
 			 * the buffer should no longer refer to the transaction.
 			 */
-			bp->b_transp = NULL;
+			XFS_BUF_SET_FSPRIVATE2(bp, NULL);
 		}
 
 		/*
@@ -452,13 +454,13 @@ xfs_buf_item_unpin(
 		 */
 		if (bip->bli_flags & XFS_BLI_STALE_INODE) {
 			xfs_buf_do_callbacks(bp);
-			bp->b_fspriv = NULL;
-			bp->b_iodone = NULL;
+			XFS_BUF_SET_FSPRIVATE(bp, NULL);
+			XFS_BUF_CLR_IODONE_FUNC(bp);
 		} else {
 			spin_lock(&ailp->xa_lock);
 			xfs_trans_ail_delete(ailp, (xfs_log_item_t *)bip);
 			xfs_buf_item_relse(bp);
-			ASSERT(bp->b_fspriv == NULL);
+			ASSERT(XFS_BUF_FSPRIVATE(bp, void *) == NULL);
 		}
 		xfs_buf_relse(bp);
 	}
@@ -481,7 +483,7 @@ xfs_buf_item_trylock(
 
 	if (XFS_BUF_ISPINNED(bp))
 		return XFS_ITEM_PINNED;
-	if (!xfs_buf_trylock(bp))
+	if (!XFS_BUF_CPSEMA(bp))
 		return XFS_ITEM_LOCKED;
 
 	/* take a reference to the buffer.  */
@@ -523,7 +525,7 @@ xfs_buf_item_unlock(
 	uint			hold;
 
 	/* Clear the buffer's association with this transaction. */
-	bp->b_transp = NULL;
+	XFS_BUF_SET_FSPRIVATE2(bp, NULL);
 
 	/*
 	 * If this is a transaction abort, don't return early.  Instead, allow
@@ -683,7 +685,7 @@ xfs_buf_item_init(
 	xfs_buf_t	*bp,
 	xfs_mount_t	*mp)
 {
-	xfs_log_item_t		*lip = bp->b_fspriv;
+	xfs_log_item_t		*lip;
 	xfs_buf_log_item_t	*bip;
 	int			chunks;
 	int			map_size;
@@ -695,8 +697,12 @@ xfs_buf_item_init(
 	 * nothing to do here so return.
 	 */
 	ASSERT(bp->b_target->bt_mount == mp);
-	if (lip != NULL && lip->li_type == XFS_LI_BUF)
-		return;
+	if (XFS_BUF_FSPRIVATE(bp, void *) != NULL) {
+		lip = XFS_BUF_FSPRIVATE(bp, xfs_log_item_t *);
+		if (lip->li_type == XFS_LI_BUF) {
+			return;
+		}
+	}
 
 	/*
 	 * chunks is the number of XFS_BLF_CHUNK size pieces
@@ -735,9 +741,11 @@ xfs_buf_item_init(
 	 * Put the buf item into the list of items attached to the
 	 * buffer at the front.
 	 */
-	if (bp->b_fspriv)
-		bip->bli_item.li_bio_list = bp->b_fspriv;
-	bp->b_fspriv = bip;
+	if (XFS_BUF_FSPRIVATE(bp, void *) != NULL) {
+		bip->bli_item.li_bio_list =
+				XFS_BUF_FSPRIVATE(bp, xfs_log_item_t *);
+	}
+	XFS_BUF_SET_FSPRIVATE(bp, bip);
 }
 
 
@@ -869,11 +877,12 @@ xfs_buf_item_relse(
 
 	trace_xfs_buf_item_relse(bp, _RET_IP_);
 
-	bip = bp->b_fspriv;
-	bp->b_fspriv = bip->bli_item.li_bio_list;
-	if (bp->b_fspriv == NULL)
-		bp->b_iodone = NULL;
-
+	bip = XFS_BUF_FSPRIVATE(bp, xfs_buf_log_item_t*);
+	XFS_BUF_SET_FSPRIVATE(bp, bip->bli_item.li_bio_list);
+	if ((XFS_BUF_FSPRIVATE(bp, void *) == NULL) &&
+	    (XFS_BUF_IODONE_FUNC(bp) != NULL)) {
+		XFS_BUF_CLR_IODONE_FUNC(bp);
+	}
 	xfs_buf_rele(bp);
 	xfs_buf_item_free(bip);
 }
@@ -897,20 +906,20 @@ xfs_buf_attach_iodone(
 	xfs_log_item_t	*head_lip;
 
 	ASSERT(XFS_BUF_ISBUSY(bp));
-	ASSERT(xfs_buf_islocked(bp));
+	ASSERT(XFS_BUF_VALUSEMA(bp) <= 0);
 
 	lip->li_cb = cb;
-	head_lip = bp->b_fspriv;
-	if (head_lip) {
+	if (XFS_BUF_FSPRIVATE(bp, void *) != NULL) {
+		head_lip = XFS_BUF_FSPRIVATE(bp, xfs_log_item_t *);
 		lip->li_bio_list = head_lip->li_bio_list;
 		head_lip->li_bio_list = lip;
 	} else {
-		bp->b_fspriv = lip;
+		XFS_BUF_SET_FSPRIVATE(bp, lip);
 	}
 
-	ASSERT(bp->b_iodone == NULL ||
-	       bp->b_iodone == xfs_buf_iodone_callbacks);
-	bp->b_iodone = xfs_buf_iodone_callbacks;
+	ASSERT((XFS_BUF_IODONE_FUNC(bp) == xfs_buf_iodone_callbacks) ||
+	       (XFS_BUF_IODONE_FUNC(bp) == NULL));
+	XFS_BUF_SET_IODONE_FUNC(bp, xfs_buf_iodone_callbacks);
 }
 
 /*
@@ -931,8 +940,8 @@ xfs_buf_do_callbacks(
 {
 	struct xfs_log_item	*lip;
 
-	while ((lip = bp->b_fspriv) != NULL) {
-		bp->b_fspriv = lip->li_bio_list;
+	while ((lip = XFS_BUF_FSPRIVATE(bp, xfs_log_item_t *)) != NULL) {
+		XFS_BUF_SET_FSPRIVATE(bp, lip->li_bio_list);
 		ASSERT(lip->li_cb != NULL);
 		/*
 		 * Clear the next pointer so we don't have any
@@ -999,7 +1008,7 @@ xfs_buf_iodone_callbacks(
 			XFS_BUF_DONE(bp);
 			XFS_BUF_SET_START(bp);
 		}
-		ASSERT(bp->b_iodone != NULL);
+		ASSERT(XFS_BUF_IODONE_FUNC(bp));
 		trace_xfs_buf_item_iodone_async(bp, _RET_IP_);
 		xfs_buf_relse(bp);
 		return;
@@ -1017,8 +1026,8 @@ xfs_buf_iodone_callbacks(
 
 do_callbacks:
 	xfs_buf_do_callbacks(bp);
-	bp->b_fspriv = NULL;
-	bp->b_iodone = NULL;
+	XFS_BUF_SET_FSPRIVATE(bp, NULL);
+	XFS_BUF_CLR_IODONE_FUNC(bp);
 	xfs_buf_ioend(bp, 0);
 }
 

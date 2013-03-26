@@ -175,7 +175,6 @@ struct sh_mmcif_host {
 	enum mmcif_state state;
 	spinlock_t lock;
 	bool power;
-	bool card_present;
 
 	/* DMA support */
 	struct dma_chan		*chan_rx;
@@ -878,23 +877,23 @@ static void sh_mmcif_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 	spin_unlock_irqrestore(&host->lock, flags);
 
 	if (ios->power_mode == MMC_POWER_UP) {
-		if (!host->card_present) {
+		if (p->set_pwr)
+			p->set_pwr(host->pd, ios->power_mode);
+		if (!host->power) {
 			/* See if we also get DMA */
 			sh_mmcif_request_dma(host, host->pd->dev.platform_data);
-			host->card_present = true;
+			pm_runtime_get_sync(&host->pd->dev);
+			host->power = true;
 		}
 	} else if (ios->power_mode == MMC_POWER_OFF || !ios->clock) {
 		/* clock stop */
 		sh_mmcif_clock_control(host, 0);
 		if (ios->power_mode == MMC_POWER_OFF) {
-			if (host->card_present) {
+			if (host->power) {
+				pm_runtime_put(&host->pd->dev);
 				sh_mmcif_release_dma(host);
-				host->card_present = false;
+				host->power = false;
 			}
-		}
-		if (host->power) {
-			pm_runtime_put(&host->pd->dev);
-			host->power = false;
 			if (p->down_pwr)
 				p->down_pwr(host->pd);
 		}
@@ -902,16 +901,8 @@ static void sh_mmcif_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 		return;
 	}
 
-	if (ios->clock) {
-		if (!host->power) {
-			if (p->set_pwr)
-				p->set_pwr(host->pd, ios->power_mode);
-			pm_runtime_get_sync(&host->pd->dev);
-			host->power = true;
-			sh_mmcif_sync_reset(host);
-		}
+	if (ios->clock)
 		sh_mmcif_clock_control(host, ios->clock);
-	}
 
 	host->bus_width = ios->bus_width;
 	host->state = STATE_IDLE;

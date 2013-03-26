@@ -1,0 +1,82 @@
+This file tries to loosely document what has been added to AK Kernel
+repository.  This file is by no means complete. For further information,
+read the git logs at
+
+https://github.com/anarkia1976/AK-tuna/commits/ak-4.2.2-official-mainline
+
+Some changes happen solely to improve source compatibility with latest
+Linux kernel versions tree. This is always a good thing: we can track
+the latest patches and fixes.
+
+Please, keep this information updated.
+
+========
+
+20130324:
+  NAME: Merge branch 'master' of master.kernel.org:/pub/scm/linux/kernel/git/davem/net-2.6
+  COMMIT: 20ec0105b570ba3e1eba16ad49abc81bc830dbf8
+  UPSTREAM: http://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git
+  UPSTREAM COMMIT: 033b1142f4bd44a116d1356fe4a0510437ceddf9 
+
+  - Updated drivers for bnx2x and cnic.
+  - Minimal modifications to bluetooth and wireless iwl3945.
+
+
+20130324:
+  NAME: Merge branch 'master' of master.kernel.org:/pub/scm/linux/kernel/git/davem/net-2.6
+  COMMIT: 805dbddb7ef994b7ab82c0f3b8b3c047f75b0b7d
+  UPSTREAM: http://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git
+  UPSTREAM COMMIT: e627539090d5a4efe1d55f1dfa24f8ce08a454e8
+
+  - Updated code for several network device drivers.
+  - Improve network infrastructure such as bonding and vlan support.
+
+
+20130324:
+  NAME: Merge branch 'master' of master.kernel.org:/pub/scm/linux/kernel/git/jkirsher/net-next-2.6
+  COMMIT: b0079cb1e062ac6cea47eef93fb8cabff4552f90
+  UPSTREAM: http://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git
+  UPSTREAM COMMIT: 97c7b1798f3de24315f0a3a7abcc7cf5de3285b9
+
+  - Improve code for: benet, can, e1000, igb, ixgbe, netxen, virtio_net.
+  - Improve ipv6 support.
+
+
+20130324:
+  NAME: Merge branch 'vhost-net-next' of git://git.kernel.org/pub/scm/linux/kernel/git/mst/vhost
+  COMMIT: b0079cb1e062ac6cea47eef93fb8cabff4552f90
+  UPSTREAM: http://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git
+  UPSTREAM COMMIT: ace62dd1a805ab9de9ef8d67585d0588cb379653
+
+  - Update driver acenic.
+  - vhost: if more outstanding DMAs, queue the work.
+
+
+20130324:
+  NAME: Merge branches 'cma', 'cxgb4', 'ipath', 'misc', 'mlx4', 'mthca', 'qib' and 'srp' into for-next
+  COMMIT: b8adb0fcd58aae73c4709299dddbd6f2f4e1b0d0
+  UPSTREAM: http://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git
+  UPSTREAM COMMIT: 4460207561290c3be7e6c7538f22690028170c1d
+
+  - Improve infiniband support.
+  - Improve driver mlx4. 
+  - Get repository ready for later 'next' merges.
+
+20130324:
+  NAME: Merge branch 'slab-for-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/penberg/slab-2.6
+  COMMIT: 38863c98b2543b3495a34e4aa403388e4767e5d7
+  UPSTREAM: http://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git
+  UPSTREAM COMMIT: f99b7880cb9863e11441bd8b2f31d4f556ef1a44
+
+  - Improve slab, slub and slob memory allocators.
+  - From log:
+  
+  slab: fix DEBUG_SLAB warning
+  slab: shrink sizeof(struct kmem_cache)
+  slab: fix DEBUG_SLAB build
+  slub: Fix missing <linux/stacktrace.h> include
+  slub: reduce overhead of slub_debug
+  slub: Add method to verify memory is not freed
+  slub: Enable backtrace for create/delete points
+  slab allocators: Provide generic description of alignment defines
+  slob/lockdep: Fix gfp flags passed to lockdep

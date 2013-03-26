@@ -871,9 +871,15 @@ xlog_space_left(
 void
 xlog_iodone(xfs_buf_t *bp)
 {
-	xlog_in_core_t	*iclog = bp->b_fspriv;
-	xlog_t		*l = iclog->ic_log;
-	int		aborted = 0;
+	xlog_in_core_t	*iclog;
+	xlog_t		*l;
+	int		aborted;
+
+	iclog = XFS_BUF_FSPRIVATE(bp, xlog_in_core_t *);
+	ASSERT(XFS_BUF_FSPRIVATE2(bp, unsigned long) == (unsigned long) 2);
+	XFS_BUF_SET_FSPRIVATE2(bp, (unsigned long)1);
+	aborted = 0;
+	l = iclog->ic_log;
 
 	/*
 	 * Race to shutdown the filesystem if we see an error.
@@ -1050,9 +1056,10 @@ xlog_alloc_log(xfs_mount_t	*mp,
 	bp = xfs_buf_get_empty(log->l_iclog_size, mp->m_logdev_targp);
 	if (!bp)
 		goto out_free_log;
-	bp->b_iodone = xlog_iodone;
+	XFS_BUF_SET_IODONE_FUNC(bp, xlog_iodone);
+	XFS_BUF_SET_FSPRIVATE2(bp, (unsigned long)1);
 	ASSERT(XFS_BUF_ISBUSY(bp));
-	ASSERT(xfs_buf_islocked(bp));
+	ASSERT(XFS_BUF_VALUSEMA(bp) <= 0);
 	log->l_xbuf = bp;
 
 	spin_lock_init(&log->l_icloglock);
@@ -1083,8 +1090,10 @@ xlog_alloc_log(xfs_mount_t	*mp,
 						log->l_iclog_size, 0);
 		if (!bp)
 			goto out_free_iclog;
-
-		bp->b_iodone = xlog_iodone;
+		if (!XFS_BUF_CPSEMA(bp))
+			ASSERT(0);
+		XFS_BUF_SET_IODONE_FUNC(bp, xlog_iodone);
+		XFS_BUF_SET_FSPRIVATE2(bp, (unsigned long)1);
 		iclog->ic_bp = bp;
 		iclog->ic_data = bp->b_addr;
 #ifdef DEBUG
@@ -1109,7 +1118,7 @@ xlog_alloc_log(xfs_mount_t	*mp,
 		iclog->ic_datap = (char *)iclog->ic_data + log->l_iclog_hsize;
 
 		ASSERT(XFS_BUF_ISBUSY(iclog->ic_bp));
-		ASSERT(xfs_buf_islocked(iclog->ic_bp));
+		ASSERT(XFS_BUF_VALUSEMA(iclog->ic_bp) <= 0);
 		init_waitqueue_head(&iclog->ic_force_wait);
 		init_waitqueue_head(&iclog->ic_write_wait);
 
@@ -1245,8 +1254,9 @@ STATIC int
 xlog_bdstrat(
 	struct xfs_buf		*bp)
 {
-	struct xlog_in_core	*iclog = bp->b_fspriv;
+	struct xlog_in_core	*iclog;
 
+	iclog = XFS_BUF_FSPRIVATE(bp, xlog_in_core_t *);
 	if (iclog->ic_state & XLOG_STATE_IOERROR) {
 		XFS_BUF_ERROR(bp, EIO);
 		XFS_BUF_STALE(bp);
@@ -1259,6 +1269,7 @@ xlog_bdstrat(
 		return 0;
 	}
 
+	bp->b_flags |= _XBF_RUN_QUEUES;
 	xfs_buf_iorequest(bp);
 	return 0;
 }
@@ -1340,6 +1351,8 @@ xlog_sync(xlog_t		*log,
 	}
 
 	bp = iclog->ic_bp;
+	ASSERT(XFS_BUF_FSPRIVATE2(bp, unsigned long) == (unsigned long)1);
+	XFS_BUF_SET_FSPRIVATE2(bp, (unsigned long)2);
 	XFS_BUF_SET_ADDR(bp, BLOCK_LSN(be64_to_cpu(iclog->ic_header.h_lsn)));
 
 	XFS_STATS_ADD(xs_log_blocks, BTOBB(count));
@@ -1353,28 +1366,22 @@ xlog_sync(xlog_t		*log,
 		iclog->ic_bwritecnt = 1;
 	}
 	XFS_BUF_SET_COUNT(bp, count);
-	bp->b_fspriv = iclog;
+	XFS_BUF_SET_FSPRIVATE(bp, iclog);	/* save for later */
 	XFS_BUF_ZEROFLAGS(bp);
 	XFS_BUF_BUSY(bp);
 	XFS_BUF_ASYNC(bp);
-	bp->b_flags |= XBF_SYNCIO;
+	bp->b_flags |= XBF_LOG_BUFFER;
 
 	if (log->l_mp->m_flags & XFS_MOUNT_BARRIER) {
-		bp->b_flags |= XBF_FUA;
-
 		/*
-		 * Flush the data device before flushing the log to make
-		 * sure all meta data written back from the AIL actually made
-		 * it to disk before stamping the new log tail LSN into the
-		 * log buffer.  For an external log we need to issue the
-		 * flush explicitly, and unfortunately synchronously here;
-		 * for an internal log we can simply use the block layer
-		 * state machine for preflushes.
+		 * If we have an external log device, flush the data device
+		 * before flushing the log to make sure all meta data
+		 * written back from the AIL actually made it to disk
+		 * before writing out the new log tail LSN in the log buffer.
 		 */
 		if (log->l_mp->m_logdev_targp != log->l_mp->m_ddev_targp)
 			xfs_blkdev_issue_flush(log->l_mp->m_ddev_targp);
-		else
-			bp->b_flags |= XBF_FLUSH;
+		XFS_BUF_ORDERED(bp);
 	}
 
 	ASSERT(XFS_BUF_ADDR(bp) <= log->l_logBBsize-1);
@@ -1397,16 +1404,19 @@ xlog_sync(xlog_t		*log,
 	}
 	if (split) {
 		bp = iclog->ic_log->l_xbuf;
+		ASSERT(XFS_BUF_FSPRIVATE2(bp, unsigned long) ==
+							(unsigned long)1);
+		XFS_BUF_SET_FSPRIVATE2(bp, (unsigned long)2);
 		XFS_BUF_SET_ADDR(bp, 0);	     /* logical 0 */
 		XFS_BUF_SET_PTR(bp, (xfs_caddr_t)((__psint_t)&(iclog->ic_header)+
 					    (__psint_t)count), split);
-		bp->b_fspriv = iclog;
+		XFS_BUF_SET_FSPRIVATE(bp, iclog);
 		XFS_BUF_ZEROFLAGS(bp);
 		XFS_BUF_BUSY(bp);
 		XFS_BUF_ASYNC(bp);
-		bp->b_flags |= XBF_SYNCIO;
+		bp->b_flags |= XBF_LOG_BUFFER;
 		if (log->l_mp->m_flags & XFS_MOUNT_BARRIER)
-			bp->b_flags |= XBF_FUA;
+			XFS_BUF_ORDERED(bp);
 		dptr = XFS_BUF_PTR(bp);
 		/*
 		 * Bump the cycle numbers at the start of each block
@@ -3511,13 +3521,13 @@ xlog_verify_iclog(xlog_t	 *log,
 	spin_unlock(&log->l_icloglock);
 
 	/* check log magic numbers */
-	if (iclog->ic_header.h_magicno != cpu_to_be32(XLOG_HEADER_MAGIC_NUM))
+	if (be32_to_cpu(iclog->ic_header.h_magicno) != XLOG_HEADER_MAGIC_NUM)
 		xfs_emerg(log->l_mp, "%s: invalid magic num", __func__);
 
 	ptr = (xfs_caddr_t) &iclog->ic_header;
 	for (ptr += BBSIZE; ptr < ((xfs_caddr_t)&iclog->ic_header) + count;
 	     ptr += BBSIZE) {
-		if (*(__be32 *)ptr == cpu_to_be32(XLOG_HEADER_MAGIC_NUM))
+		if (be32_to_cpu(*(__be32 *)ptr) == XLOG_HEADER_MAGIC_NUM)
 			xfs_emerg(log->l_mp, "%s: unexpected magic num",
 				__func__);
 	}

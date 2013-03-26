@@ -21,8 +21,8 @@
  *          15 May 2002
  */
 
-#ifndef LINUX_MMC_MMC_H
-#define LINUX_MMC_MMC_H
+#ifndef MMC_MMC_H
+#define MMC_MMC_H
 
 /* Standard MMC commands (4.1)           type  argument     response */
    /* class 1 */
@@ -337,4 +337,5 @@ struct _mmc_csd {
 #define MMC_SWITCH_MODE_CLEAR_BITS	0x02	/* Clear bits which are 1 in value */
 #define MMC_SWITCH_MODE_WRITE_BYTE	0x03	/* Set target to value */
 
-#endif /* LINUX_MMC_MMC_H */
+#endif  /* MMC_MMC_PROTOCOL_H */
+

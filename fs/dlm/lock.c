@@ -305,7 +305,7 @@ static void queue_cast(struct dlm_rsb *r, struct dlm_lkb *lkb, int rv)
 		rv = -EDEADLK;
 	}
 
-	dlm_add_cb(lkb, DLM_CB_CAST, lkb->lkb_grmode, rv, lkb->lkb_sbflags);
+	dlm_add_ast(lkb, DLM_CB_CAST, lkb->lkb_grmode, rv, lkb->lkb_sbflags);
 }
 
 static inline void queue_cast_overlap(struct dlm_rsb *r, struct dlm_lkb *lkb)
@@ -319,7 +319,7 @@ static void queue_bast(struct dlm_rsb *r, struct dlm_lkb *lkb, int rqmode)
 	if (is_master_copy(lkb)) {
 		send_bast(r, lkb, rqmode);
 	} else {
-		dlm_add_cb(lkb, DLM_CB_BAST, rqmode, 0, 0);
+		dlm_add_ast(lkb, DLM_CB_BAST, rqmode, 0, 0);
 	}
 }
 
@@ -327,68 +327,19 @@ static void queue_bast(struct dlm_rsb *r, struct dlm_lkb *lkb, int rqmode)
  * Basic operations on rsb's and lkb's
  */
 
-static int pre_rsb_struct(struct dlm_ls *ls)
-{
-	struct dlm_rsb *r1, *r2;
-	int count = 0;
-
-	spin_lock(&ls->ls_new_rsb_spin);
-	if (ls->ls_new_rsb_count > dlm_config.ci_new_rsb_count / 2) {
-		spin_unlock(&ls->ls_new_rsb_spin);
-		return 0;
-	}
-	spin_unlock(&ls->ls_new_rsb_spin);
-
-	r1 = dlm_allocate_rsb(ls);
-	r2 = dlm_allocate_rsb(ls);
-
-	spin_lock(&ls->ls_new_rsb_spin);
-	if (r1) {
-		list_add(&r1->res_hashchain, &ls->ls_new_rsb);
-		ls->ls_new_rsb_count++;
-	}
-	if (r2) {
-		list_add(&r2->res_hashchain, &ls->ls_new_rsb);
-		ls->ls_new_rsb_count++;
-	}
-	count = ls->ls_new_rsb_count;
-	spin_unlock(&ls->ls_new_rsb_spin);
-
-	if (!count)
-		return -ENOMEM;
-	return 0;
-}
-
-/* If ls->ls_new_rsb is empty, return -EAGAIN, so the caller can
-   unlock any spinlocks, go back and call pre_rsb_struct again.
-   Otherwise, take an rsb off the list and return it. */
-
-static int get_rsb_struct(struct dlm_ls *ls, char *name, int len,
-			  struct dlm_rsb **r_ret)
+static struct dlm_rsb *create_rsb(struct dlm_ls *ls, char *name, int len)
 {
 	struct dlm_rsb *r;
-	int count;
 
-	spin_lock(&ls->ls_new_rsb_spin);
-	if (list_empty(&ls->ls_new_rsb)) {
-		count = ls->ls_new_rsb_count;
-		spin_unlock(&ls->ls_new_rsb_spin);
-		log_debug(ls, "find_rsb retry %d %d %s",
-			  count, dlm_config.ci_new_rsb_count, name);
-		return -EAGAIN;
-	}
-
-	r = list_first_entry(&ls->ls_new_rsb, struct dlm_rsb, res_hashchain);
-	list_del(&r->res_hashchain);
-	ls->ls_new_rsb_count--;
-	spin_unlock(&ls->ls_new_rsb_spin);
+	r = dlm_allocate_rsb(ls, len);
+	if (!r)
+		return NULL;
 
 	r->res_ls = ls;
 	r->res_length = len;
 	memcpy(r->res_name, name, len);
 	mutex_init(&r->res_mutex);
 
-	INIT_LIST_HEAD(&r->res_hashchain);
 	INIT_LIST_HEAD(&r->res_lookup);
 	INIT_LIST_HEAD(&r->res_grantqueue);
 	INIT_LIST_HEAD(&r->res_convertqueue);
@@ -396,8 +347,7 @@ static int get_rsb_struct(struct dlm_ls *ls, char *name, int len,
 	INIT_LIST_HEAD(&r->res_root_list);
 	INIT_LIST_HEAD(&r->res_recover_list);
 
-	*r_ret = r;
-	return 0;
+	return r;
 }
 
 static int search_rsb_list(struct list_head *head, char *name, int len,
@@ -455,6 +405,16 @@ static int _search_rsb(struct dlm_ls *ls, char *name, int len, int b,
 	return error;
 }
 
+static int search_rsb(struct dlm_ls *ls, char *name, int len, int b,
+		      unsigned int flags, struct dlm_rsb **r_ret)
+{
+	int error;
+	spin_lock(&ls->ls_rsbtbl[b].lock);
+	error = _search_rsb(ls, name, len, b, flags, r_ret);
+	spin_unlock(&ls->ls_rsbtbl[b].lock);
+	return error;
+}
+
 /*
  * Find rsb in rsbtbl and potentially create/add one
  *
@@ -472,48 +432,35 @@ static int _search_rsb(struct dlm_ls *ls, char *name, int len, int b,
 static int find_rsb(struct dlm_ls *ls, char *name, int namelen,
 		    unsigned int flags, struct dlm_rsb **r_ret)
 {
-	struct dlm_rsb *r = NULL;
+	struct dlm_rsb *r = NULL, *tmp;
 	uint32_t hash, bucket;
-	int error;
+	int error = -EINVAL;
 
-	if (namelen > DLM_RESNAME_MAXLEN) {
-		error = -EINVAL;
+	if (namelen > DLM_RESNAME_MAXLEN)
 		goto out;
-	}
 
 	if (dlm_no_directory(ls))
 		flags |= R_CREATE;
 
+	error = 0;
 	hash = jhash(name, namelen, 0);
 	bucket = hash & (ls->ls_rsbtbl_size - 1);
 
- retry:
-	if (flags & R_CREATE) {
-		error = pre_rsb_struct(ls);
-		if (error < 0)
-			goto out;
-	}
-
-	spin_lock(&ls->ls_rsbtbl[bucket].lock);
-
-	error = _search_rsb(ls, name, namelen, bucket, flags, &r);
+	error = search_rsb(ls, name, namelen, bucket, flags, &r);
 	if (!error)
-		goto out_unlock;
+		goto out;
 
 	if (error == -EBADR && !(flags & R_CREATE))
-		goto out_unlock;
+		goto out;
 
 	/* the rsb was found but wasn't a master copy */
 	if (error == -ENOTBLK)
-		goto out_unlock;
+		goto out;
 
-	error = get_rsb_struct(ls, name, namelen, &r);
-	if (error == -EAGAIN) {
-		spin_unlock(&ls->ls_rsbtbl[bucket].lock);
-		goto retry;
-	}
-	if (error)
-		goto out_unlock;
+	error = -ENOMEM;
+	r = create_rsb(ls, name, namelen);
+	if (!r)
+		goto out;
 
 	r->res_hash = hash;
 	r->res_bucket = bucket;
@@ -527,10 +474,18 @@ static int find_rsb(struct dlm_ls *ls, char *name, int namelen,
 			nodeid = 0;
 		r->res_nodeid = nodeid;
 	}
+
+	spin_lock(&ls->ls_rsbtbl[bucket].lock);
+	error = _search_rsb(ls, name, namelen, bucket, 0, &tmp);
+	if (!error) {
+		spin_unlock(&ls->ls_rsbtbl[bucket].lock);
+		dlm_free_rsb(r);
+		r = tmp;
+		goto out;
+	}
 	list_add(&r->res_hashchain, &ls->ls_rsbtbl[bucket].list);
-	error = 0;
- out_unlock:
 	spin_unlock(&ls->ls_rsbtbl[bucket].lock);
+	error = 0;
  out:
 	*r_ret = r;
 	return error;
@@ -625,8 +580,9 @@ static void detach_lkb(struct dlm_lkb *lkb)
 
 static int create_lkb(struct dlm_ls *ls, struct dlm_lkb **lkb_ret)
 {
-	struct dlm_lkb *lkb;
-	int rv, id;
+	struct dlm_lkb *lkb, *tmp;
+	uint32_t lkid = 0;
+	uint16_t bucket;
 
 	lkb = dlm_allocate_lkb(ls);
 	if (!lkb)
@@ -638,42 +594,60 @@ static int create_lkb(struct dlm_ls *ls, struct dlm_lkb **lkb_ret)
 	INIT_LIST_HEAD(&lkb->lkb_ownqueue);
 	INIT_LIST_HEAD(&lkb->lkb_rsb_lookup);
 	INIT_LIST_HEAD(&lkb->lkb_time_list);
-	INIT_LIST_HEAD(&lkb->lkb_cb_list);
-	mutex_init(&lkb->lkb_cb_mutex);
-	INIT_WORK(&lkb->lkb_cb_work, dlm_callback_work);
+	INIT_LIST_HEAD(&lkb->lkb_astqueue);
 
- retry:
-	rv = idr_pre_get(&ls->ls_lkbidr, GFP_NOFS);
-	if (!rv)
-		return -ENOMEM;
+	get_random_bytes(&bucket, sizeof(bucket));
+	bucket &= (ls->ls_lkbtbl_size - 1);
 
-	spin_lock(&ls->ls_lkbidr_spin);
-	rv = idr_get_new_above(&ls->ls_lkbidr, lkb, 1, &id);
-	if (!rv)
-		lkb->lkb_id = id;
-	spin_unlock(&ls->ls_lkbidr_spin);
+	write_lock(&ls->ls_lkbtbl[bucket].lock);
 
-	if (rv == -EAGAIN)
-		goto retry;
+	/* counter can roll over so we must verify lkid is not in use */
 
-	if (rv < 0) {
-		log_error(ls, "create_lkb idr error %d", rv);
-		return rv;
+	while (lkid == 0) {
+		lkid = (bucket << 16) | ls->ls_lkbtbl[bucket].counter++;
+
+		list_for_each_entry(tmp, &ls->ls_lkbtbl[bucket].list,
+				    lkb_idtbl_list) {
+			if (tmp->lkb_id != lkid)
+				continue;
+			lkid = 0;
+			break;
+		}
 	}
+
+	lkb->lkb_id = lkid;
+	list_add(&lkb->lkb_idtbl_list, &ls->ls_lkbtbl[bucket].list);
+	write_unlock(&ls->ls_lkbtbl[bucket].lock);
 
 	*lkb_ret = lkb;
 	return 0;
 }
 
+static struct dlm_lkb *__find_lkb(struct dlm_ls *ls, uint32_t lkid)
+{
+	struct dlm_lkb *lkb;
+	uint16_t bucket = (lkid >> 16);
+
+	list_for_each_entry(lkb, &ls->ls_lkbtbl[bucket].list, lkb_idtbl_list) {
+		if (lkb->lkb_id == lkid)
+			return lkb;
+	}
+	return NULL;
+}
+
 static int find_lkb(struct dlm_ls *ls, uint32_t lkid, struct dlm_lkb **lkb_ret)
 {
 	struct dlm_lkb *lkb;
+	uint16_t bucket = (lkid >> 16);
 
-	spin_lock(&ls->ls_lkbidr_spin);
-	lkb = idr_find(&ls->ls_lkbidr, lkid);
+	if (bucket >= ls->ls_lkbtbl_size)
+		return -EBADSLT;
+
+	read_lock(&ls->ls_lkbtbl[bucket].lock);
+	lkb = __find_lkb(ls, lkid);
 	if (lkb)
 		kref_get(&lkb->lkb_ref);
-	spin_unlock(&ls->ls_lkbidr_spin);
+	read_unlock(&ls->ls_lkbtbl[bucket].lock);
 
 	*lkb_ret = lkb;
 	return lkb ? 0 : -ENOENT;
@@ -694,12 +668,12 @@ static void kill_lkb(struct kref *kref)
 
 static int __put_lkb(struct dlm_ls *ls, struct dlm_lkb *lkb)
 {
-	uint32_t lkid = lkb->lkb_id;
+	uint16_t bucket = (lkb->lkb_id >> 16);
 
-	spin_lock(&ls->ls_lkbidr_spin);
+	write_lock(&ls->ls_lkbtbl[bucket].lock);
 	if (kref_put(&lkb->lkb_ref, kill_lkb)) {
-		idr_remove(&ls->ls_lkbidr, lkid);
-		spin_unlock(&ls->ls_lkbidr_spin);
+		list_del(&lkb->lkb_idtbl_list);
+		write_unlock(&ls->ls_lkbtbl[bucket].lock);
 
 		detach_lkb(lkb);
 
@@ -709,7 +683,7 @@ static int __put_lkb(struct dlm_ls *ls, struct dlm_lkb *lkb)
 		dlm_free_lkb(lkb);
 		return 1;
 	} else {
-		spin_unlock(&ls->ls_lkbidr_spin);
+		write_unlock(&ls->ls_lkbtbl[bucket].lock);
 		return 0;
 	}
 }
@@ -875,7 +849,9 @@ void dlm_scan_waiters(struct dlm_ls *ls)
 
 		if (!num_nodes) {
 			num_nodes = ls->ls_num_nodes;
-			warned = kzalloc(num_nodes * sizeof(int), GFP_KERNEL);
+			warned = kmalloc(GFP_KERNEL, num_nodes * sizeof(int));
+			if (warned)
+				memset(warned, 0, num_nodes * sizeof(int));
 		}
 		if (!warned)
 			continue;
@@ -887,7 +863,9 @@ void dlm_scan_waiters(struct dlm_ls *ls)
 			  dlm_config.ci_waitwarn_us, lkb->lkb_wait_nodeid);
 	}
 	mutex_unlock(&ls->ls_waiters_mutex);
-	kfree(warned);
+
+	if (warned)
+		kfree(warned);
 
 	if (debug_expired)
 		log_debug(ls, "scan_waiters %u warn %u over %d us max %lld us",
@@ -2423,6 +2401,9 @@ static int do_convert(struct dlm_rsb *r, struct dlm_lkb *lkb)
 
 	if (deadlk) {
 		/* it's left on the granted queue */
+		log_debug(r->res_ls, "deadlock %x node %d sts%d g%d r%d %s",
+			  lkb->lkb_id, lkb->lkb_nodeid, lkb->lkb_status,
+			  lkb->lkb_grmode, lkb->lkb_rqmode, r->res_name);
 		revert_lock(r, lkb);
 		queue_cast(r, lkb, -EDEADLK);
 		error = -EDEADLK;
@@ -4012,6 +3993,8 @@ static void _receive_message(struct dlm_ls *ls, struct dlm_message *ms)
 	default:
 		log_error(ls, "unknown message type %d", ms->m_type);
 	}
+
+	dlm_astd_wake();
 }
 
 /* If the lockspace is in recovery mode (locking stopped), then normal
@@ -4150,7 +4133,7 @@ void dlm_recover_waiters_pre(struct dlm_ls *ls)
 	struct dlm_message *ms_stub;
 	int wait_type, stub_unlock_result, stub_cancel_result;
 
-	ms_stub = kmalloc(sizeof(struct dlm_message), GFP_KERNEL);
+	ms_stub = kmalloc(GFP_KERNEL, sizeof(struct dlm_message));
 	if (!ms_stub) {
 		log_error(ls, "dlm_recover_waiters_pre no mem");
 		return;
@@ -4826,7 +4809,7 @@ int dlm_user_unlock(struct dlm_ls *ls, struct dlm_user_args *ua_tmp,
 		goto out_put;
 
 	spin_lock(&ua->proc->locks_spin);
-	/* dlm_user_add_cb() may have already taken lkb off the proc list */
+	/* dlm_user_add_ast() may have already taken lkb off the proc list */
 	if (!list_empty(&lkb->lkb_ownqueue))
 		list_move(&lkb->lkb_ownqueue, &ua->proc->unlocking);
 	spin_unlock(&ua->proc->locks_spin);
@@ -4963,7 +4946,7 @@ static int unlock_proc_lock(struct dlm_ls *ls, struct dlm_lkb *lkb)
 
 /* We have to release clear_proc_locks mutex before calling unlock_proc_lock()
    (which does lock_rsb) due to deadlock with receiving a message that does
-   lock_rsb followed by dlm_user_add_cb() */
+   lock_rsb followed by dlm_user_add_ast() */
 
 static struct dlm_lkb *del_proc_lock(struct dlm_ls *ls,
 				     struct dlm_user_proc *proc)
@@ -4986,7 +4969,7 @@ static struct dlm_lkb *del_proc_lock(struct dlm_ls *ls,
 	return lkb;
 }
 
-/* The ls_clear_proc_locks mutex protects against dlm_user_add_cb() which
+/* The ls_clear_proc_locks mutex protects against dlm_user_add_asts() which
    1) references lkb->ua which we free here and 2) adds lkbs to proc->asts,
    which we clear here. */
 
@@ -5028,10 +5011,10 @@ void dlm_clear_proc_locks(struct dlm_ls *ls, struct dlm_user_proc *proc)
 		dlm_put_lkb(lkb);
 	}
 
-	list_for_each_entry_safe(lkb, safe, &proc->asts, lkb_cb_list) {
+	list_for_each_entry_safe(lkb, safe, &proc->asts, lkb_astqueue) {
 		memset(&lkb->lkb_callbacks, 0,
 		       sizeof(struct dlm_callback) * DLM_CALLBACKS_SIZE);
-		list_del_init(&lkb->lkb_cb_list);
+		list_del_init(&lkb->lkb_astqueue);
 		dlm_put_lkb(lkb);
 	}
 
@@ -5070,10 +5053,10 @@ static void purge_proc_locks(struct dlm_ls *ls, struct dlm_user_proc *proc)
 	spin_unlock(&proc->locks_spin);
 
 	spin_lock(&proc->asts_spin);
-	list_for_each_entry_safe(lkb, safe, &proc->asts, lkb_cb_list) {
+	list_for_each_entry_safe(lkb, safe, &proc->asts, lkb_astqueue) {
 		memset(&lkb->lkb_callbacks, 0,
 		       sizeof(struct dlm_callback) * DLM_CALLBACKS_SIZE);
-		list_del_init(&lkb->lkb_cb_list);
+		list_del_init(&lkb->lkb_astqueue);
 		dlm_put_lkb(lkb);
 	}
 	spin_unlock(&proc->asts_spin);

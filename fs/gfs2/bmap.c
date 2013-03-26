@@ -854,7 +854,11 @@ static int do_strip(struct gfs2_inode *ip, struct buffer_head *dibh,
 			blen++;
 		else {
 			if (bstart) {
-				__gfs2_free_blocks(ip, bstart, blen, metadata);
+				if (metadata)
+					__gfs2_free_meta(ip, bstart, blen);
+				else
+					__gfs2_free_data(ip, bstart, blen);
+
 				btotal += blen;
 			}
 
@@ -866,7 +870,11 @@ static int do_strip(struct gfs2_inode *ip, struct buffer_head *dibh,
 		gfs2_add_inode_blocks(&ip->i_inode, -1);
 	}
 	if (bstart) {
-		__gfs2_free_blocks(ip, bstart, blen, metadata);
+		if (metadata)
+			__gfs2_free_meta(ip, bstart, blen);
+		else
+			__gfs2_free_data(ip, bstart, blen);
+
 		btotal += blen;
 	}
 

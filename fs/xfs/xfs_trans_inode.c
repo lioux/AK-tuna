@@ -55,6 +55,7 @@ xfs_trans_ijoin(
 {
 	xfs_inode_log_item_t	*iip;
 
+	ASSERT(ip->i_transp == NULL);
 	ASSERT(xfs_isilocked(ip, XFS_ILOCK_EXCL));
 	if (ip->i_itemp == NULL)
 		xfs_inode_item_init(ip, ip->i_mount);
@@ -67,6 +68,12 @@ xfs_trans_ijoin(
 	xfs_trans_add_item(tp, &iip->ili_item);
 
 	xfs_trans_inode_broot_debug(ip);
+
+	/*
+	 * Initialize i_transp so we can find it with xfs_inode_incore()
+	 * in xfs_trans_iget() above.
+	 */
+	ip->i_transp = tp;
 }
 
 /*
@@ -104,6 +111,7 @@ xfs_trans_ichgtime(
 
 	ASSERT(tp);
 	ASSERT(xfs_isilocked(ip, XFS_ILOCK_EXCL));
+	ASSERT(ip->i_transp == tp);
 
 	tv = current_fs_time(inode->i_sb);
 
@@ -132,6 +140,7 @@ xfs_trans_log_inode(
 	xfs_inode_t	*ip,
 	uint		flags)
 {
+	ASSERT(ip->i_transp == tp);
 	ASSERT(ip->i_itemp != NULL);
 	ASSERT(xfs_isilocked(ip, XFS_ILOCK_EXCL));
 

@@ -26,7 +26,6 @@
 #include "rgrp.h"
 #include "util.h"
 #include "trans.h"
-#include "dir.h"
 
 /**
  * __gfs2_ail_flush - remove all buffers for a given lock from the AIL
@@ -219,7 +218,6 @@ static void inode_go_inval(struct gfs2_glock *gl, int flags)
 		if (ip) {
 			set_bit(GIF_INVALID, &ip->i_flags);
 			forget_all_cached_acls(&ip->i_inode);
-			gfs2_dir_hash_inval(ip);
 		}
 	}
 
@@ -318,8 +316,6 @@ static int gfs2_dinode_in(struct gfs2_inode *ip, const void *buf)
 	ip->i_generation = be64_to_cpu(str->di_generation);
 
 	ip->i_diskflags = be32_to_cpu(str->di_flags);
-	ip->i_eattr = be64_to_cpu(str->di_eattr);
-	/* i_diskflags and i_eattr must be set before gfs2_set_inode_flags() */
 	gfs2_set_inode_flags(&ip->i_inode);
 	height = be16_to_cpu(str->di_height);
 	if (unlikely(height > GFS2_MAX_META_HEIGHT))
@@ -332,6 +328,7 @@ static int gfs2_dinode_in(struct gfs2_inode *ip, const void *buf)
 	ip->i_depth = (u8)depth;
 	ip->i_entries = be32_to_cpu(str->di_entries);
 
+	ip->i_eattr = be64_to_cpu(str->di_eattr);
 	if (S_ISREG(ip->i_inode.i_mode))
 		gfs2_set_aops(&ip->i_inode);
 
@@ -552,6 +549,7 @@ const struct gfs2_glock_operations gfs2_inode_glops = {
 	.go_lock = inode_go_lock,
 	.go_dump = inode_go_dump,
 	.go_type = LM_TYPE_INODE,
+	.go_min_hold_time = HZ / 5,
 	.go_flags = GLOF_ASPACE,
 };
 
@@ -562,6 +560,7 @@ const struct gfs2_glock_operations gfs2_rgrp_glops = {
 	.go_unlock = rgrp_go_unlock,
 	.go_dump = gfs2_rgrp_dump,
 	.go_type = LM_TYPE_RGRP,
+	.go_min_hold_time = HZ / 5,
 	.go_flags = GLOF_ASPACE,
 };
 
