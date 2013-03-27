@@ -1,0 +1,153 @@
+This file tries to loosely document what has been added to AK Kernel
+repository.  This file is by no means complete. For further information,
+read the git logs at
+
+https://github.com/anarkia1976/AK-tuna/commits/ak-4.2.2-official-mainline
+
+Some changes happen solely to improve source compatibility with latest
+Linux kernel versions tree. This is always a good thing: we can track
+the latest patches and fixes.
+
+Please, keep this information updated.
+
+========
+
+20130324:
+  NAME: Merge branch 'master' of master.kernel.org:/pub/scm/linux/kernel/git/davem/net-2.6
+  COMMIT: 20ec0105b570ba3e1eba16ad49abc81bc830dbf8
+  UPSTREAM: http://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git
+  UPSTREAM COMMIT: 033b1142f4bd44a116d1356fe4a0510437ceddf9 
+
+  - Updated drivers for bnx2x and cnic.
+  - Minimal modifications to bluetooth and wireless iwl3945.
+
+
+20130324:
+  NAME: Merge branch 'master' of master.kernel.org:/pub/scm/linux/kernel/git/davem/net-2.6
+  COMMIT: 805dbddb7ef994b7ab82c0f3b8b3c047f75b0b7d
+  UPSTREAM: http://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git
+  UPSTREAM COMMIT: e627539090d5a4efe1d55f1dfa24f8ce08a454e8
+
+  - Updated code for several network device drivers.
+  - Improve network infrastructure such as bonding and vlan support.
+
+
+20130324:
+  NAME: Merge branch 'master' of master.kernel.org:/pub/scm/linux/kernel/git/jkirsher/net-next-2.6
+  COMMIT: b0079cb1e062ac6cea47eef93fb8cabff4552f90
+  UPSTREAM: http://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git
+  UPSTREAM COMMIT: 97c7b1798f3de24315f0a3a7abcc7cf5de3285b9
+
+  - Improve code for: benet, can, e1000, igb, ixgbe, netxen, virtio_net.
+  - Improve ipv6 support.
+
+
+20130324:
+  NAME: Merge branch 'vhost-net-next' of git://git.kernel.org/pub/scm/linux/kernel/git/mst/vhost
+  COMMIT: b0079cb1e062ac6cea47eef93fb8cabff4552f90
+  UPSTREAM: http://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git
+  UPSTREAM COMMIT: ace62dd1a805ab9de9ef8d67585d0588cb379653
+
+  - Update driver acenic.
+  - vhost: if more outstanding DMAs, queue the work.
+
+
+20130324:
+  NAME: Merge branches 'cma', 'cxgb4', 'ipath', 'misc', 'mlx4', 'mthca', 'qib' and 'srp' into for-next
+  COMMIT: b8adb0fcd58aae73c4709299dddbd6f2f4e1b0d0
+  UPSTREAM: http://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git
+  UPSTREAM COMMIT: 4460207561290c3be7e6c7538f22690028170c1d
+
+  - Improve infiniband support.
+  - Improve driver mlx4. 
+  - Get repository ready for later 'next' merges.
+
+20130324:
+  NAME: Merge branch 'slab-for-linus' of git://git.kernel.org/pub/scm/linux/kernel/git/penberg/slab-2.6
+  COMMIT: 38863c98b2543b3495a34e4aa403388e4767e5d7
+  UPSTREAM: http://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git
+  UPSTREAM COMMIT: f99b7880cb9863e11441bd8b2f31d4f556ef1a44
+
+  - Improve slab, slub and slob memory allocators.
+  - From log:
+  
+  slab: fix DEBUG_SLAB warning
+  slab: shrink sizeof(struct kmem_cache)
+  slab: fix DEBUG_SLAB build
+  slub: Fix missing <linux/stacktrace.h> include
+  slub: reduce overhead of slub_debug
+  slub: Add method to verify memory is not freed
+  slub: Enable backtrace for create/delete points
+  slab allocators: Provide generic description of alignment defines
+  slob/lockdep: Fix gfp flags passed to lockdep
+
+
+20130325:
+  NAME: Add codel (Controlled Delay AQM) and fq_codel (Fair Queue Codel
+        AQM) qdisc scheduler
+
+  Composed of the following commits in order:
+
+  ORIGIN: https://github.com/lioux/AK-tuna.git COMMIT:
+  db196621e0202f5382dc5d0baa63667d7f8c7ed8 UPSTREAM
+  NAME: net: introduce skb_flow_dissect() UPSTREAM:
+  http://git.kernel.org/cgit/linux/kernel/git/torvalds/linux.git USPTREAM
+  COMMIT: 0744dd00c1b1be99a25b62b1b48df440e82e57e0
+
+  ORIGIN: https://github.com/lioux/AK-tuna.git
+  COMMIT: bbd50be948e539a9e42fd83b4bd936a5469f10b0
+  UPSTREAM NAME: flow_dissector: use a 64bit load/store
+  UPSTREAM: http://git.kernel.org/cgit/linux/kernel/git/torvalds/linux.git
+  USPTREAM COMMIT: 4d77d2b567ec66a443792d99e96ac760991d80d0
+
+  ORIGIN: https://github.com/lioux/AK-tuna.git
+  COMMIT: 1abe81759786d6b3e78ea104283505b0f947683c
+  UPSTREAM NAME: codel: Controlled Delay AQM
+  UPSTREAM: http://git.kernel.org/cgit/linux/kernel/git/torvalds/linux.git
+  USPTREAM COMMIT: 76e3cc126bb223013a6b9a0e2a51238d1ef2e409
+
+  ORIGIN: https://github.com/lioux/AK-tuna.git
+  COMMIT: 1cd664d7b1aad210fa1324293bd2b026a9d3be86
+  UPSTREAM NAME: fq_codel: Fair Queue Codel AQM
+  UPSTREAM: http://git.kernel.org/cgit/linux/kernel/git/torvalds/linux.git
+  USPTREAM COMMIT: 4b549a2ef4bef9965d97cbd992ba67930cd3e0fe
+
+  ORIGIN: https://github.com/lioux/AK-tuna.git
+  COMMIT: d09821334344fdef49385173832f2eadc8f47dab
+  UPSTREAM NAME: codel: use Newton method instead of sqrt() and divides
+  UPSTREAM: http://git.kernel.org/cgit/linux/kernel/git/torvalds/linux.git
+  USPTREAM COMMIT: 536edd67109df5e0cdb2c4ee759e9bade7976367
+
+  ORIGIN: https://github.com/lioux/AK-tuna.git
+  COMMIT: 2b8869ca34af8cf40b5f4db8337db6b9f4b8185f
+  UPSTREAM NAME: net/codel: Add missing #include <linux/prefetch.h>
+  UPSTREAM: http://git.kernel.org/cgit/linux/kernel/git/torvalds/linux.git
+  USPTREAM COMMIT: ce5b4b977127ee20c3f9c3fd3637cd3796f649f5
+  
+  ORIGIN: https://github.com/lioux/AK-tuna.git
+  COMMIT: a643f0b46bb553b68ce2acc09e88857ce4f45887
+  UPSTREAM NAME: codel: use u16 field instead of 31bits for rec_inv_sqrt
+  UPSTREAM: http://git.kernel.org/cgit/linux/kernel/git/torvalds/linux.git
+  USPTREAM COMMIT: 6ff272c9ad65eda219cd975b9da2dbc31cc812ee
+
+  ORIGIN: https://github.com/lioux/AK-tuna.git
+  COMMIT: 7ff9eba9cd25f215b1fde4c835fbc08d4841ade7
+  UPSTREAM NAME: fq_codel: should use qdisc backlog as threshold
+  UPSTREAM: http://git.kernel.org/cgit/linux/kernel/git/torvalds/linux.git
+  USPTREAM COMMIT: 865ec5523dadbedefbc5710a68969f686a28d928
+
+  ORIGIN: https://github.com/lioux/AK-tuna.git
+  COMMIT: f8597b32f661258224428f824018e682c781200e
+  UPSTREAM NAME: codel: refine one condition to avoid a nul rec_inv_sqrt
+  UPSTREAM: http://git.kernel.org/cgit/linux/kernel/git/torvalds/linux.git
+  USPTREAM COMMIT: 2359a47671fc4fb0fe5e9945f76c2cb10792c0f8
+
+  ORIGIN: https://github.com/lioux/AK-tuna.git
+  COMMIT: c792a693a877712d0ad280ccd2f1425a8c2df695
+  UPSTREAM NAME: fq_codel: dont reinit flow state
+  UPSTREAM: http://git.kernel.org/cgit/linux/kernel/git/torvalds/linux.git
+  USPTREAM COMMIT: b379135c40163ae79ba7a54e6928b53983e74ee8
+  
+  NAME: Enable build of codel and fq_codel
+  ORIGIN: https://github.com/lioux/AK-tuna.git
+  COMMIT: e8e1ed0948026e2b813f8cfdd70df3ca39147d5e
