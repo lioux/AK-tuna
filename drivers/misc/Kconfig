@@ -602,6 +602,11 @@ config CUSTOM_VOLTAGE
 	default y
 	help
 	  Say Y here to enable Custom Voltage
+config TOUCH_WAKE
+	bool "Support for Touch Wake"
+	default y
+	help
+	  Say Y here to enable Touch Wake
 
 config FSYNC_CONTROL
         bool "Support for FSync Control"

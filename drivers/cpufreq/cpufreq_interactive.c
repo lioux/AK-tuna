@@ -326,8 +326,8 @@ static u64 update_load(int cpu)
 	u64 active_time;
 
 	now_idle = get_cpu_idle_time(cpu, &now);
-	delta_idle = (unsigned int)(now_idle - pcpu->time_in_idle);
-	delta_time = (unsigned int)(now - pcpu->time_in_idle_timestamp);
+	delta_idle = (unsigned int) cputime64_sub(now_idle, pcpu->time_in_idle);
+	delta_time = (unsigned int) cputime64_sub(now, pcpu->time_in_idle_timestamp);
 	active_time = delta_time - delta_idle;
 	pcpu->cputime_speedadj += active_time * pcpu->policy->cur;
 
@@ -357,7 +357,7 @@ static void cpufreq_interactive_timer(unsigned long data)
 
 	spin_lock_irqsave(&pcpu->load_lock, flags);
 	now = update_load(data);
-	delta_time = (unsigned int)(now - pcpu->cputime_speedadj_timestamp);
+	delta_time = (unsigned int) cputime64_sub(now, pcpu->cputime_speedadj_timestamp);
 	cputime_speedadj = pcpu->cputime_speedadj;
 	spin_unlock_irqrestore(&pcpu->load_lock, flags);
 
@@ -409,7 +409,8 @@ static void cpufreq_interactive_timer(unsigned long data)
 	 * floor frequency for the minimum sample time since last validated.
 	 */
 	if (new_freq < pcpu->floor_freq) {
-		if (now - pcpu->floor_validate_time < min_sample_time) {
+		if (cputime64_sub(now, pcpu->floor_validate_time)
+		    < min_sample_time) {
 			trace_cpufreq_interactive_notyet(
 				data, cpu_load, pcpu->target_freq,
 				pcpu->policy->cur, new_freq);
