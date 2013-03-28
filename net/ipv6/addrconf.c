@@ -428,7 +428,7 @@ static struct inet6_dev * ipv6_add_dev(struct net_device *dev)
 	ndev->tstamp = jiffies;
 	addrconf_sysctl_register(ndev);
 	/* protected by rtnl_lock */
-	rcu_assign_pointer(dev->ip6_ptr, ndev);
+	RCU_INIT_POINTER(dev->ip6_ptr, ndev);
 
 	/* Join all-node multicast group */
 	ipv6_dev_mc_inc(dev, &in6addr_linklocal_allnodes);
@@ -656,7 +656,7 @@ ipv6_add_addr(struct inet6_dev *idev, const struct in6_addr *addr, int pfxlen,
 	 * layer address of our nexhop router
 	 */
 
-	if (dst_get_neighbour(&rt->dst) == NULL)
+	if (dst_get_neighbour_raw(&rt->dst) == NULL)
 		ifa->flags &= ~IFA_F_OPTIMISTIC;
 
 	ifa->idev = idev;
@@ -2704,7 +2704,7 @@ static int addrconf_ifdown(struct net_device *dev, int how)
 		idev->dead = 1;
 
 		/* protected by rtnl_lock */
-		rcu_assign_pointer(dev->ip6_ptr, NULL);
+		RCU_INIT_POINTER(dev->ip6_ptr, NULL);
 
 		/* Step 1.5: remove snmp6 entry */
 		snmp6_unregister_dev(idev);

@@ -1539,6 +1539,14 @@ static inline bool is_skb_forwardable(struct net_device *dev,
  */
 int dev_forward_skb(struct net_device *dev, struct sk_buff *skb)
 {
+	if (skb_shinfo(skb)->tx_flags & SKBTX_DEV_ZEROCOPY) {
+		if (skb_copy_ubufs(skb, GFP_ATOMIC)) {
+			atomic_long_inc(&dev->rx_dropped);
+			kfree_skb(skb);
+			return NET_RX_DROP;
+		}
+	}
+
 	skb_orphan(skb);
 	nf_reset(skb);
 
@@ -1945,9 +1953,11 @@ static int illegal_highdma(struct net_device *dev, struct sk_buff *skb)
 #ifdef CONFIG_HIGHMEM
 	int i;
 	if (!(dev->features & NETIF_F_HIGHDMA)) {
-		for (i = 0; i < skb_shinfo(skb)->nr_frags; i++)
-			if (PageHighMem(skb_shinfo(skb)->frags[i].page))
+		for (i = 0; i < skb_shinfo(skb)->nr_frags; i++) {
+			skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
+			if (PageHighMem(skb_frag_page(frag)))
 				return 1;
+		}
 	}
 
 	if (PCI_DMA_BUS_IS_PHYS) {
@@ -1956,7 +1966,8 @@ static int illegal_highdma(struct net_device *dev, struct sk_buff *skb)
 		if (!pdev)
 			return 0;
 		for (i = 0; i < skb_shinfo(skb)->nr_frags; i++) {
-			dma_addr_t addr = page_to_phys(skb_shinfo(skb)->frags[i].page);
+			skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
+			dma_addr_t addr = page_to_phys(skb_frag_page(frag));
 			if (!pdev->dma_mask || addr + PAGE_SIZE - 1 > *pdev->dma_mask)
 				return 1;
 		}
@@ -2521,24 +2532,27 @@ static inline void ____napi_schedule(struct softnet_data *sd,
 
 /*
  * __skb_get_rxhash: calculate a flow hash based on src/dst addresses
- * and src/dst port numbers. Returns a non-zero hash number on success
- * and 0 on failure.
+ * and src/dst port numbers.  Sets rxhash in skb to non-zero hash value
+ * on success, zero indicates no valid hash.  Also, sets l4_rxhash in skb
+ * if hash is a canonical 4-tuple hash over transport ports.
  */
-__u32 __skb_get_rxhash(struct sk_buff *skb)
+void __skb_get_rxhash(struct sk_buff *skb)
 {
 	int nhoff, hash = 0, poff;
 	const struct ipv6hdr *ip6;
 	const struct iphdr *ip;
 	u8 ip_proto;
-	u32 addr1, addr2, ihl;
+	u32 addr1, addr2;
+	u16 proto;
 	union {
 		u32 v32;
 		u16 v16[2];
 	} ports;
 
 	nhoff = skb_network_offset(skb);
+	proto = skb->protocol;
 
-	switch (skb->protocol) {
+	switch (proto) {
 	case __constant_htons(ETH_P_IP):
 		if (!pskb_may_pull(skb, sizeof(*ip) + nhoff))
 			goto done;
@@ -2550,7 +2564,7 @@ __u32 __skb_get_rxhash(struct sk_buff *skb)
 			ip_proto = ip->protocol;
 		addr1 = (__force u32) ip->saddr;
 		addr2 = (__force u32) ip->daddr;
-		ihl = ip->ihl;
+		nhoff += ip->ihl * 4;
 		break;
 	case __constant_htons(ETH_P_IPV6):
 		if (!pskb_may_pull(skb, sizeof(*ip6) + nhoff))
@@ -2560,7 +2574,7 @@ __u32 __skb_get_rxhash(struct sk_buff *skb)
 		ip_proto = ip6->nexthdr;
 		addr1 = (__force u32) ip6->saddr.s6_addr32[3];
 		addr2 = (__force u32) ip6->daddr.s6_addr32[3];
-		ihl = (40 >> 2);
+		nhoff += 40;
 		break;
 	default:
 		goto done;
@@ -2569,25 +2583,25 @@ __u32 __skb_get_rxhash(struct sk_buff *skb)
 	ports.v32 = 0;
 	poff = proto_ports_offset(ip_proto);
 	if (poff >= 0) {
-		nhoff += ihl * 4 + poff;
-		if (pskb_may_pull(skb, nhoff + 4))
+		nhoff += poff;
+		if (pskb_may_pull(skb, nhoff + 4)) {
 			ports.v32 = * (__force u32 *) (skb->data + nhoff);
+			if (ports.v16[1] < ports.v16[0])
+				swap(ports.v16[0], ports.v16[1]);
+			skb->l4_rxhash = 1;
+		}
 	}
 
 	/* get a consistent hash (same value on both flow directions) */
-	if (addr2 < addr1 ||
-	    (addr2 == addr1 &&
-	     ports.v16[1] < ports.v16[0])) {
+	if (addr2 < addr1)
 		swap(addr1, addr2);
-		swap(ports.v16[0], ports.v16[1]);
-	}
 
 	hash = jhash_3words(addr1, addr2, ports.v32, hashrnd);
 	if (!hash)
 		hash = 1;
 
 done:
-	return hash;
+	skb->rxhash = hash;
 }
 EXPORT_SYMBOL(__skb_get_rxhash);
 
@@ -2716,10 +2730,8 @@ static int get_rps_cpu(struct net_device *dev, struct sk_buff *skb,
 		if (unlikely(tcpu != next_cpu) &&
 		    (tcpu == RPS_NO_CPU || !cpu_online(tcpu) ||
 		     ((int)(per_cpu(softnet_data, tcpu).input_queue_head -
-		      rflow->last_qtail)) >= 0)) {
-			tcpu = next_cpu;
+		      rflow->last_qtail)) >= 0))
 			rflow = set_rps_cpu(dev, skb, rflow, next_cpu);
-		}
 
 		if (tcpu != RPS_NO_CPU && cpu_online(tcpu)) {
 			*rflowp = rflow;
@@ -3099,8 +3111,8 @@ void netdev_rx_handler_unregister(struct net_device *dev)
 {
 
 	ASSERT_RTNL();
-	rcu_assign_pointer(dev->rx_handler, NULL);
-	rcu_assign_pointer(dev->rx_handler_data, NULL);
+	RCU_INIT_POINTER(dev->rx_handler, NULL);
+	RCU_INIT_POINTER(dev->rx_handler_data, NULL);
 }
 EXPORT_SYMBOL_GPL(netdev_rx_handler_unregister);
 
@@ -3175,7 +3187,6 @@ ncls:
 		}
 		switch (rx_handler(&skb)) {
 		case RX_HANDLER_CONSUMED:
-			ret = NET_RX_SUCCESS;
 			goto out;
 		case RX_HANDLER_ANOTHER:
 			goto another_round;
@@ -3430,7 +3441,7 @@ pull:
 		skb_shinfo(skb)->frags[0].size -= grow;
 
 		if (unlikely(!skb_shinfo(skb)->frags[0].size)) {
-			put_page(skb_shinfo(skb)->frags[0].page);
+			skb_frag_unref(skb, 0);
 			memmove(skb_shinfo(skb)->frags,
 				skb_shinfo(skb)->frags + 1,
 				--skb_shinfo(skb)->nr_frags * sizeof(skb_frag_t));
@@ -3500,10 +3511,9 @@ void skb_gro_reset_offset(struct sk_buff *skb)
 	NAPI_GRO_CB(skb)->frag0_len = 0;
 
 	if (skb->mac_header == skb->tail &&
-	    !PageHighMem(skb_shinfo(skb)->frags[0].page)) {
+	    !PageHighMem(skb_frag_page(&skb_shinfo(skb)->frags[0]))) {
 		NAPI_GRO_CB(skb)->frag0 =
-			page_address(skb_shinfo(skb)->frags[0].page) +
-			skb_shinfo(skb)->frags[0].page_offset;
+			skb_frag_address(&skb_shinfo(skb)->frags[0]);
 		NAPI_GRO_CB(skb)->frag0_len = skb_shinfo(skb)->frags[0].size;
 	}
 }
@@ -4510,10 +4520,10 @@ void __dev_set_rx_mode(struct net_device *dev)
 		 */
 		if (!netdev_uc_empty(dev) && !dev->uc_promisc) {
 			__dev_set_promiscuity(dev, 1);
-			dev->uc_promisc = 1;
+			dev->uc_promisc = true;
 		} else if (netdev_uc_empty(dev) && dev->uc_promisc) {
 			__dev_set_promiscuity(dev, -1);
-			dev->uc_promisc = 0;
+			dev->uc_promisc = false;
 		}
 
 		if (ops->ndo_set_multicast_list)

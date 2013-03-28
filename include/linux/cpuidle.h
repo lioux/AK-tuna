@@ -47,7 +47,7 @@ struct cpuidle_state {
 
 /* Idle State Flags */
 #define CPUIDLE_FLAG_TIME_VALID	(0x01) /* is residency time measurable? */
-#define CPUIDLE_FLAG_IGNORE	(0x100) /* ignore during this idle period */
+#define CPUIDLE_FLAG_COUPLED	(0x02) /* state applies to multiple cpus */
 
 #define CPUIDLE_DRIVER_FLAGS_MASK (0xFFFF0000)
 
@@ -95,7 +95,11 @@ struct cpuidle_device {
 	void			*governor_data;
 	struct cpuidle_state	*safe_state;
 
-	int (*prepare)		(struct cpuidle_device *dev);
+#ifdef CONFIG_ARCH_NEEDS_CPU_IDLE_COUPLED
+	int			safe_state_index;
+	cpumask_t		coupled_cpus;
+	struct cpuidle_coupled	*coupled;
+#endif
 };
 
 DECLARE_PER_CPU(struct cpuidle_device *, cpuidle_devices);
@@ -122,6 +126,8 @@ struct cpuidle_driver {
 };
 
 #ifdef CONFIG_CPU_IDLE
+extern void disable_cpuidle(void);
+extern int cpuidle_idle_call(void);
 
 extern int cpuidle_register_driver(struct cpuidle_driver *drv);
 struct cpuidle_driver *cpuidle_get_driver(void);
@@ -135,6 +141,8 @@ extern int cpuidle_enable_device(struct cpuidle_device *dev);
 extern void cpuidle_disable_device(struct cpuidle_device *dev);
 
 #else
+static inline void disable_cpuidle(void) { }
+static inline int cpuidle_idle_call(void) { return -ENODEV; }
 
 static inline int cpuidle_register_driver(struct cpuidle_driver *drv)
 {return -ENODEV; }
@@ -150,6 +158,10 @@ static inline int cpuidle_enable_device(struct cpuidle_device *dev)
 {return -ENODEV; }
 static inline void cpuidle_disable_device(struct cpuidle_device *dev) { }
 
+#endif
+
+#ifdef CONFIG_ARCH_NEEDS_CPU_IDLE_COUPLED
+void cpuidle_coupled_parallel_barrier(struct cpuidle_device *dev, atomic_t *a);
 #endif
 
 /******************************

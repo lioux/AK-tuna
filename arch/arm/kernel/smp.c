@@ -27,7 +27,7 @@
 #include <linux/clockchips.h>
 #include <linux/completion.h>
 
-#include <asm/atomic.h>
+#include <linux/atomic.h>
 #include <asm/cacheflush.h>
 #include <asm/cpu.h>
 #include <asm/cputype.h>
@@ -658,10 +658,6 @@ asmlinkage void __exception_irq_entry do_IPI(int ipinr, struct pt_regs *regs)
 		irq_enter();
 		ipi_cpu_stop(cpu);
 		irq_exit();
-		break;
-
-	case IPI_CPU_BACKTRACE:
-		ipi_cpu_backtrace(cpu, regs);
 		break;
 
 	default:

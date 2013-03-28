@@ -122,6 +122,7 @@ static int ip_dev_loopback_xmit(struct sk_buff *newskb)
 	newskb->pkt_type = PACKET_LOOPBACK;
 	newskb->ip_summed = CHECKSUM_UNNECESSARY;
 	WARN_ON(!skb_dst(newskb));
+	skb_dst_force(newskb);
 	netif_rx_ni(newskb);
 	return 0;
 }
@@ -204,9 +205,15 @@ static inline int ip_finish_output2(struct sk_buff *skb)
 		skb = skb2;
 	}
 
+	rcu_read_lock();
 	neigh = dst_get_neighbour(dst);
-	if (neigh)
-		return neigh_output(neigh, skb);
+	if (neigh) {
+		int res = neigh_output(neigh, skb);
+
+		rcu_read_unlock();
+		return res;
+	}
+	rcu_read_unlock();
 
 	if (net_ratelimit())
 		printk(KERN_DEBUG "ip_finish_output2: No header cache and no neighbour!\n");
@@ -982,13 +989,13 @@ alloc_new_skb:
 			if (page && (left = PAGE_SIZE - off) > 0) {
 				if (copy >= left)
 					copy = left;
-				if (page != frag->page) {
+				if (page != skb_frag_page(frag)) {
 					if (i == MAX_SKB_FRAGS) {
 						err = -EMSGSIZE;
 						goto error;
 					}
-					get_page(page);
 					skb_fill_page_desc(skb, i, page, off, 0);
+					skb_frag_ref(skb, i);
 					frag = &skb_shinfo(skb)->frags[i];
 				}
 			} else if (i < MAX_SKB_FRAGS) {
@@ -1008,7 +1015,8 @@ alloc_new_skb:
 				err = -EMSGSIZE;
 				goto error;
 			}
-			if (getfrag(from, page_address(frag->page)+frag->page_offset+frag->size, offset, copy, skb->len, skb) < 0) {
+			if (getfrag(from, skb_frag_address(frag)+frag->size,
+				    offset, copy, skb->len, skb) < 0) {
 				err = -EFAULT;
 				goto error;
 			}
