@@ -60,8 +60,8 @@ static void throttle_delayed_work_fn(struct work_struct *work);
 
 #define TSHUT_THRESHOLD_TSHUT_HOT	110000	/* 110 deg C */
 #define TSHUT_THRESHOLD_TSHUT_COLD	100000	/* 100 deg C */
-#define BGAP_THRESHOLD_T_HOT    80000  /* 80 deg C */
-#define BGAP_THRESHOLD_T_COLD   75000  /* 75 deg C */
+#define BGAP_THRESHOLD_T_HOT    90000  /* 80 deg C */
+#define BGAP_THRESHOLD_T_COLD   85000  /* 75 deg C */
 #define OMAP_ADC_START_VALUE	530
 #define OMAP_ADC_END_VALUE	923
 
