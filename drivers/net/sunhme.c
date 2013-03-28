@@ -2305,13 +2305,12 @@ static netdev_tx_t happy_meal_start_xmit(struct sk_buff *skb,
 		entry = NEXT_TX(entry);
 
 		for (frag = 0; frag < skb_shinfo(skb)->nr_frags; frag++) {
-			skb_frag_t *this_frag = &skb_shinfo(skb)->frags[frag];
+			const skb_frag_t *this_frag = &skb_shinfo(skb)->frags[frag];
 			u32 len, mapping, this_txflags;
 
-			len = this_frag->size;
-			mapping = dma_map_page(hp->dma_dev, this_frag->page,
-					       this_frag->page_offset, len,
-					       DMA_TO_DEVICE);
+			len = skb_frag_size(this_frag);
+			mapping = skb_frag_dma_map(hp->dma_dev, this_frag,
+						   0, len, DMA_TO_DEVICE);
 			this_txflags = tx_flags;
 			if (frag == skb_shinfo(skb)->nr_frags - 1)
 				this_txflags |= TXFLAG_EOP;
@@ -2619,7 +2618,7 @@ static const struct net_device_ops hme_netdev_ops = {
 	.ndo_start_xmit		= happy_meal_start_xmit,
 	.ndo_tx_timeout		= happy_meal_tx_timeout,
 	.ndo_get_stats		= happy_meal_get_stats,
-	.ndo_set_multicast_list = happy_meal_set_multicast,
+	.ndo_set_rx_mode	= happy_meal_set_multicast,
 	.ndo_change_mtu		= eth_change_mtu,
 	.ndo_set_mac_address 	= eth_mac_addr,
 	.ndo_validate_addr	= eth_validate_addr,

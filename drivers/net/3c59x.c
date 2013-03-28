@@ -1055,7 +1055,7 @@ static const struct net_device_ops boomrang_netdev_ops = {
 #ifdef CONFIG_PCI
 	.ndo_do_ioctl 		= vortex_ioctl,
 #endif
-	.ndo_set_multicast_list = set_rx_mode,
+	.ndo_set_rx_mode	= set_rx_mode,
 	.ndo_change_mtu		= eth_change_mtu,
 	.ndo_set_mac_address 	= eth_mac_addr,
 	.ndo_validate_addr	= eth_validate_addr,
@@ -1073,7 +1073,7 @@ static const struct net_device_ops vortex_netdev_ops = {
 #ifdef CONFIG_PCI
 	.ndo_do_ioctl 		= vortex_ioctl,
 #endif
-	.ndo_set_multicast_list = set_rx_mode,
+	.ndo_set_rx_mode	= set_rx_mode,
 	.ndo_change_mtu		= eth_change_mtu,
 	.ndo_set_mac_address 	= eth_mac_addr,
 	.ndo_validate_addr	= eth_validate_addr,
@@ -1842,7 +1842,7 @@ vortex_timer(unsigned long data)
 		ok = 1;
 	}
 
-	if (dev->flags & IFF_SLAVE || !netif_carrier_ok(dev))
+	if (!netif_carrier_ok(dev))
 		next_tick = 5*HZ;
 
 	if (vp->medialock)
@@ -2179,14 +2179,15 @@ boomerang_start_xmit(struct sk_buff *skb, struct net_device *dev)
 			skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
 
 			vp->tx_ring[entry].frag[i+1].addr =
-					cpu_to_le32(pci_map_single(VORTEX_PCI(vp),
-											   (void*)page_address(frag->page) + frag->page_offset,
-											   frag->size, PCI_DMA_TODEVICE));
+					cpu_to_le32(pci_map_single(
+						VORTEX_PCI(vp),
+						(void *)skb_frag_address(frag),
+						skb_frag_size(frag), PCI_DMA_TODEVICE));
 
 			if (i == skb_shinfo(skb)->nr_frags-1)
-					vp->tx_ring[entry].frag[i+1].length = cpu_to_le32(frag->size|LAST_FRAG);
+					vp->tx_ring[entry].frag[i+1].length = cpu_to_le32(skb_frag_size(frag)|LAST_FRAG);
 			else
-					vp->tx_ring[entry].frag[i+1].length = cpu_to_le32(frag->size);
+					vp->tx_ring[entry].frag[i+1].length = cpu_to_le32(skb_frag_size(frag));
 		}
 	}
 #else

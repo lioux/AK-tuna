@@ -113,9 +113,8 @@ static void greth_print_tx_packet(struct sk_buff *skb)
 	for (i = 0; i < skb_shinfo(skb)->nr_frags; i++) {
 
 		print_hex_dump(KERN_DEBUG, "TX: ", DUMP_PREFIX_OFFSET, 16, 1,
-			       phys_to_virt(page_to_phys(skb_shinfo(skb)->frags[i].page)) +
-			       skb_shinfo(skb)->frags[i].page_offset,
-			       length, true);
+			       skb_frag_address(&skb_shinfo(skb)->frags[i]),
+			       skb_shinfo(skb)->frags[i].size, true);
 	}
 }
 
@@ -199,7 +198,7 @@ static void greth_clean_rings(struct greth_private *greth)
 
 				dma_unmap_page(greth->dev,
 					       greth_read_bd(&tx_bdp->addr),
-					       frag->size,
+					       skb_frag_size(frag),
 					       DMA_TO_DEVICE);
 
 				greth->tx_last = NEXT_TX(greth->tx_last);
@@ -428,6 +427,7 @@ greth_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	dma_sync_single_for_device(greth->dev, dma_addr, skb->len, DMA_TO_DEVICE);
 
 	status = GRETH_BD_EN | GRETH_BD_IE | (skb->len & GRETH_BD_LEN);
+	greth->tx_bufs_length[greth->tx_next] = skb->len & GRETH_BD_LEN;
 
 	/* Wrap around descriptor ring */
 	if (greth->tx_next == GRETH_TXBD_NUM_MASK) {
@@ -490,7 +490,8 @@ greth_start_xmit_gbit(struct sk_buff *skb, struct net_device *dev)
 	if (nr_frags != 0)
 		status = GRETH_TXBD_MORE;
 
-	status |= GRETH_TXBD_CSALL;
+	if (skb->ip_summed == CHECKSUM_PARTIAL)
+		status |= GRETH_TXBD_CSALL;
 	status |= skb_headlen(skb) & GRETH_BD_LEN;
 	if (greth->tx_next == GRETH_TXBD_NUM_MASK)
 		status |= GRETH_BD_WR;
@@ -513,8 +514,10 @@ greth_start_xmit_gbit(struct sk_buff *skb, struct net_device *dev)
 		greth->tx_skbuff[curr_tx] = NULL;
 		bdp = greth->tx_bd_base + curr_tx;
 
-		status = GRETH_TXBD_CSALL | GRETH_BD_EN;
-		status |= frag->size & GRETH_BD_LEN;
+		status = GRETH_BD_EN;
+		if (skb->ip_summed == CHECKSUM_PARTIAL)
+			status |= GRETH_TXBD_CSALL;
+		status |= skb_frag_size(frag) & GRETH_BD_LEN;
 
 		/* Wrap around descriptor ring */
 		if (curr_tx == GRETH_TXBD_NUM_MASK)
@@ -528,11 +531,8 @@ greth_start_xmit_gbit(struct sk_buff *skb, struct net_device *dev)
 
 		greth_write_bd(&bdp->stat, status);
 
-		dma_addr = dma_map_page(greth->dev,
-					frag->page,
-					frag->page_offset,
-					frag->size,
-					DMA_TO_DEVICE);
+		dma_addr = skb_frag_dma_map(greth->dev, frag, 0, skb_frag_size(frag),
+					    DMA_TO_DEVICE);
 
 		if (unlikely(dma_mapping_error(greth->dev, dma_addr)))
 			goto frag_map_error;
@@ -641,6 +641,7 @@ static void greth_clean_tx(struct net_device *dev)
 				dev->stats.tx_fifo_errors++;
 		}
 		dev->stats.tx_packets++;
+		dev->stats.tx_bytes += greth->tx_bufs_length[greth->tx_last];
 		greth->tx_last = NEXT_TX(greth->tx_last);
 		greth->tx_free++;
 	}
@@ -695,6 +696,7 @@ static void greth_clean_tx_gbit(struct net_device *dev)
 		greth->tx_skbuff[greth->tx_last] = NULL;
 
 		greth_update_tx_stats(dev, stat);
+		dev->stats.tx_bytes += skb->len;
 
 		bdp = greth->tx_bd_base + greth->tx_last;
 
@@ -711,7 +713,7 @@ static void greth_clean_tx_gbit(struct net_device *dev)
 
 			dma_unmap_page(greth->dev,
 				       greth_read_bd(&bdp->addr),
-				       frag->size,
+				       skb_frag_size(frag),
 				       DMA_TO_DEVICE);
 
 			greth->tx_last = NEXT_TX(greth->tx_last);
@@ -796,6 +798,7 @@ static int greth_rx(struct net_device *dev, int limit)
 				memcpy(skb_put(skb, pkt_len), phys_to_virt(dma_addr), pkt_len);
 
 				skb->protocol = eth_type_trans(skb, dev);
+				dev->stats.rx_bytes += pkt_len;
 				dev->stats.rx_packets++;
 				netif_receive_skb(skb);
 			}
@@ -910,6 +913,7 @@ static int greth_rx_gbit(struct net_device *dev, int limit)
 
 				skb->protocol = eth_type_trans(skb, dev);
 				dev->stats.rx_packets++;
+				dev->stats.rx_bytes += pkt_len;
 				netif_receive_skb(skb);
 
 				greth->rx_skbuff[greth->rx_cur] = newskb;
@@ -1539,7 +1543,7 @@ static int __devinit greth_of_probe(struct platform_device *ofdev)
 	}
 
 	if (greth->multicast) {
-		greth_netdev_ops.ndo_set_multicast_list = greth_set_multicast_list;
+		greth_netdev_ops.ndo_set_rx_mode = greth_set_multicast_list;
 		dev->flags |= IFF_MULTICAST;
 	} else {
 		dev->flags &= ~IFF_MULTICAST;

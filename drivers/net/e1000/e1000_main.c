@@ -131,10 +131,8 @@ static void e1000_clean_tx_ring(struct e1000_adapter *adapter,
 static void e1000_clean_rx_ring(struct e1000_adapter *adapter,
                                 struct e1000_rx_ring *rx_ring);
 static void e1000_set_rx_mode(struct net_device *netdev);
-static void e1000_update_phy_info(unsigned long data);
 static void e1000_update_phy_info_task(struct work_struct *work);
-static void e1000_watchdog(unsigned long data);
-static void e1000_82547_tx_fifo_stall(unsigned long data);
+static void e1000_watchdog(struct work_struct *work);
 static void e1000_82547_tx_fifo_stall_task(struct work_struct *work);
 static netdev_tx_t e1000_xmit_frame(struct sk_buff *skb,
 				    struct net_device *netdev);
@@ -487,10 +485,19 @@ static void e1000_power_down_phy(struct e1000_adapter *adapter)
 		e1000_read_phy_reg(hw, PHY_CTRL, &mii_reg);
 		mii_reg |= MII_CR_POWER_DOWN;
 		e1000_write_phy_reg(hw, PHY_CTRL, mii_reg);
-		mdelay(1);
+		msleep(1);
 	}
 out:
 	return;
+}
+
+static void e1000_down_and_stop(struct e1000_adapter *adapter)
+{
+	set_bit(__E1000_DOWN, &adapter->flags);
+	cancel_work_sync(&adapter->reset_task);
+	cancel_delayed_work_sync(&adapter->watchdog_task);
+	cancel_delayed_work_sync(&adapter->phy_info_task);
+	cancel_delayed_work_sync(&adapter->fifo_stall_task);
 }
 
 void e1000_down(struct e1000_adapter *adapter)
@@ -522,13 +529,9 @@ void e1000_down(struct e1000_adapter *adapter)
 	/*
 	 * Setting DOWN must be after irq_disable to prevent
 	 * a screaming interrupt.  Setting DOWN also prevents
-	 * timers and tasks from rescheduling.
+	 * tasks from rescheduling.
 	 */
-	set_bit(__E1000_DOWN, &adapter->flags);
-
-	del_timer_sync(&adapter->tx_fifo_stall_timer);
-	del_timer_sync(&adapter->watchdog_timer);
-	del_timer_sync(&adapter->phy_info_timer);
+	e1000_down_and_stop(adapter);
 
 	adapter->link_speed = 0;
 	adapter->link_duplex = 0;
@@ -543,10 +546,10 @@ static void e1000_reinit_safe(struct e1000_adapter *adapter)
 {
 	while (test_and_set_bit(__E1000_RESETTING, &adapter->flags))
 		msleep(1);
-	rtnl_lock();
+	mutex_lock(&adapter->mutex);
 	e1000_down(adapter);
 	e1000_up(adapter);
-	rtnl_unlock();
+	mutex_unlock(&adapter->mutex);
 	clear_bit(__E1000_RESETTING, &adapter->flags);
 }
 
@@ -1080,6 +1083,8 @@ static int __devinit e1000_probe(struct pci_dev *pdev,
 	netdev->vlan_features |= NETIF_F_HW_CSUM;
 	netdev->vlan_features |= NETIF_F_SG;
 
+	netdev->priv_flags |= IFF_UNICAST_FLT;
+
 	adapter->en_mng_pt = e1000_enable_mng_pass_thru(hw);
 
 	/* initialize eeprom parameters */
@@ -1118,21 +1123,12 @@ static int __devinit e1000_probe(struct pci_dev *pdev,
 	if (!is_valid_ether_addr(netdev->perm_addr))
 		e_err(probe, "Invalid MAC Address\n");
 
-	init_timer(&adapter->tx_fifo_stall_timer);
-	adapter->tx_fifo_stall_timer.function = e1000_82547_tx_fifo_stall;
-	adapter->tx_fifo_stall_timer.data = (unsigned long)adapter;
 
-	init_timer(&adapter->watchdog_timer);
-	adapter->watchdog_timer.function = e1000_watchdog;
-	adapter->watchdog_timer.data = (unsigned long) adapter;
-
-	init_timer(&adapter->phy_info_timer);
-	adapter->phy_info_timer.function = e1000_update_phy_info;
-	adapter->phy_info_timer.data = (unsigned long)adapter;
-
-	INIT_WORK(&adapter->fifo_stall_task, e1000_82547_tx_fifo_stall_task);
+	INIT_DELAYED_WORK(&adapter->watchdog_task, e1000_watchdog);
+	INIT_DELAYED_WORK(&adapter->fifo_stall_task,
+			  e1000_82547_tx_fifo_stall_task);
+	INIT_DELAYED_WORK(&adapter->phy_info_task, e1000_update_phy_info_task);
 	INIT_WORK(&adapter->reset_task, e1000_reset_task);
-	INIT_WORK(&adapter->phy_info_task, e1000_update_phy_info_task);
 
 	e1000_check_options(adapter);
 
@@ -1277,13 +1273,7 @@ static void __devexit e1000_remove(struct pci_dev *pdev)
 	struct e1000_adapter *adapter = netdev_priv(netdev);
 	struct e1000_hw *hw = &adapter->hw;
 
-	set_bit(__E1000_DOWN, &adapter->flags);
-	del_timer_sync(&adapter->tx_fifo_stall_timer);
-	del_timer_sync(&adapter->watchdog_timer);
-	del_timer_sync(&adapter->phy_info_timer);
-
-	cancel_work_sync(&adapter->reset_task);
-
+	e1000_down_and_stop(adapter);
 	e1000_release_manageability(adapter);
 
 	unregister_netdev(netdev);
@@ -1327,6 +1317,7 @@ static int __devinit e1000_sw_init(struct e1000_adapter *adapter)
 	e1000_irq_disable(adapter);
 
 	spin_lock_init(&adapter->stats_lock);
+	mutex_init(&adapter->mutex);
 
 	set_bit(__E1000_DOWN, &adapter->flags);
 
@@ -1367,7 +1358,7 @@ static int __devinit e1000_alloc_queues(struct e1000_adapter *adapter)
  * The open entry point is called when a network interface is made
  * active by the system (IFF_UP).  At this point all resources needed
  * for transmit and receive operations are allocated, the interrupt
- * handler is registered with the OS, the watchdog timer is started,
+ * handler is registered with the OS, the watchdog task is started,
  * and the stack is notified that the interface is ready.
  **/
 
@@ -1812,8 +1803,8 @@ static void e1000_setup_rctl(struct e1000_adapter *adapter)
 
 	rctl &= ~(3 << E1000_RCTL_MO_SHIFT);
 
-	rctl |= E1000_RCTL_EN | E1000_RCTL_BAM |
-		E1000_RCTL_LBM_NO | E1000_RCTL_RDMTS_HALF |
+	rctl |= E1000_RCTL_BAM | E1000_RCTL_LBM_NO |
+		E1000_RCTL_RDMTS_HALF |
 		(hw->mc_filter_type << E1000_RCTL_MO_SHIFT);
 
 	if (hw->tbi_compatibility_on == 1)
@@ -1915,7 +1906,7 @@ static void e1000_configure_rx(struct e1000_adapter *adapter)
 	}
 
 	/* Enable Receives */
-	ew32(RCTL, rctl);
+	ew32(RCTL, rctl | E1000_RCTL_EN);
 }
 
 /**
@@ -2329,35 +2320,23 @@ static void e1000_set_rx_mode(struct net_device *netdev)
 	kfree(mcarray);
 }
 
-/* Need to wait a few seconds after link up to get diagnostic information from
- * the phy */
-
-static void e1000_update_phy_info(unsigned long data)
-{
-	struct e1000_adapter *adapter = (struct e1000_adapter *)data;
-	schedule_work(&adapter->phy_info_task);
-}
-
+/**
+ * e1000_update_phy_info_task - get phy info
+ * @work: work struct contained inside adapter struct
+ *
+ * Need to wait a few seconds after link up to get diagnostic information from
+ * the phy
+ */
 static void e1000_update_phy_info_task(struct work_struct *work)
 {
 	struct e1000_adapter *adapter = container_of(work,
-	                                             struct e1000_adapter,
-	                                             phy_info_task);
-	struct e1000_hw *hw = &adapter->hw;
-
-	rtnl_lock();
-	e1000_phy_get_info(hw, &adapter->phy_info);
-	rtnl_unlock();
-}
-
-/**
- * e1000_82547_tx_fifo_stall - Timer Call-back
- * @data: pointer to adapter cast into an unsigned long
- **/
-static void e1000_82547_tx_fifo_stall(unsigned long data)
-{
-	struct e1000_adapter *adapter = (struct e1000_adapter *)data;
-	schedule_work(&adapter->fifo_stall_task);
+						     struct e1000_adapter,
+						     phy_info_task.work);
+	if (test_bit(__E1000_DOWN, &adapter->flags))
+		return;
+	mutex_lock(&adapter->mutex);
+	e1000_phy_get_info(&adapter->hw, &adapter->phy_info);
+	mutex_unlock(&adapter->mutex);
 }
 
 /**
@@ -2367,13 +2346,15 @@ static void e1000_82547_tx_fifo_stall(unsigned long data)
 static void e1000_82547_tx_fifo_stall_task(struct work_struct *work)
 {
 	struct e1000_adapter *adapter = container_of(work,
-	                                             struct e1000_adapter,
-	                                             fifo_stall_task);
+						     struct e1000_adapter,
+						     fifo_stall_task.work);
 	struct e1000_hw *hw = &adapter->hw;
 	struct net_device *netdev = adapter->netdev;
 	u32 tctl;
 
-	rtnl_lock();
+	if (test_bit(__E1000_DOWN, &adapter->flags))
+		return;
+	mutex_lock(&adapter->mutex);
 	if (atomic_read(&adapter->tx_fifo_stall)) {
 		if ((er32(TDT) == er32(TDH)) &&
 		   (er32(TDFT) == er32(TDFH)) &&
@@ -2391,10 +2372,10 @@ static void e1000_82547_tx_fifo_stall_task(struct work_struct *work)
 			atomic_set(&adapter->tx_fifo_stall, 0);
 			netif_wake_queue(netdev);
 		} else if (!test_bit(__E1000_DOWN, &adapter->flags)) {
-			mod_timer(&adapter->tx_fifo_stall_timer, jiffies + 1);
+			schedule_delayed_work(&adapter->fifo_stall_task, 1);
 		}
 	}
-	rtnl_unlock();
+	mutex_unlock(&adapter->mutex);
 }
 
 bool e1000_has_link(struct e1000_adapter *adapter)
@@ -2435,17 +2416,23 @@ bool e1000_has_link(struct e1000_adapter *adapter)
 }
 
 /**
- * e1000_watchdog - Timer Call-back
- * @data: pointer to adapter cast into an unsigned long
+ * e1000_watchdog - work function
+ * @work: work struct contained inside adapter struct
  **/
-static void e1000_watchdog(unsigned long data)
+static void e1000_watchdog(struct work_struct *work)
 {
-	struct e1000_adapter *adapter = (struct e1000_adapter *)data;
+	struct e1000_adapter *adapter = container_of(work,
+						     struct e1000_adapter,
+						     watchdog_task.work);
 	struct e1000_hw *hw = &adapter->hw;
 	struct net_device *netdev = adapter->netdev;
 	struct e1000_tx_ring *txdr = adapter->tx_ring;
 	u32 link, tctl;
 
+	if (test_bit(__E1000_DOWN, &adapter->flags))
+		return;
+
+	mutex_lock(&adapter->mutex);
 	link = e1000_has_link(adapter);
 	if ((netif_carrier_ok(netdev)) && link)
 		goto link_up;
@@ -2491,8 +2478,8 @@ static void e1000_watchdog(unsigned long data)
 
 			netif_carrier_on(netdev);
 			if (!test_bit(__E1000_DOWN, &adapter->flags))
-				mod_timer(&adapter->phy_info_timer,
-				          round_jiffies(jiffies + 2 * HZ));
+				schedule_delayed_work(&adapter->phy_info_task,
+						      2 * HZ);
 			adapter->smartspeed = 0;
 		}
 	} else {
@@ -2504,8 +2491,8 @@ static void e1000_watchdog(unsigned long data)
 			netif_carrier_off(netdev);
 
 			if (!test_bit(__E1000_DOWN, &adapter->flags))
-				mod_timer(&adapter->phy_info_timer,
-				          round_jiffies(jiffies + 2 * HZ));
+				schedule_delayed_work(&adapter->phy_info_task,
+						      2 * HZ);
 		}
 
 		e1000_smartspeed(adapter);
@@ -2534,8 +2521,8 @@ link_up:
 			 * (Do the reset outside of interrupt context). */
 			adapter->tx_timeout_count++;
 			schedule_work(&adapter->reset_task);
-			/* return immediately since reset is imminent */
-			return;
+			/* exit immediately since reset is imminent */
+			goto unlock;
 		}
 	}
 
@@ -2561,10 +2548,12 @@ link_up:
 	/* Force detection of hung controller every watchdog period */
 	adapter->detect_tx_hung = true;
 
-	/* Reset the timer */
+	/* Reschedule the task */
 	if (!test_bit(__E1000_DOWN, &adapter->flags))
-		mod_timer(&adapter->watchdog_timer,
-		          round_jiffies(jiffies + 2 * HZ));
+		schedule_delayed_work(&adapter->watchdog_task, 2 * HZ);
+
+unlock:
+	mutex_unlock(&adapter->mutex);
 }
 
 enum latency_range {
@@ -2905,13 +2894,14 @@ static int e1000_tx_map(struct e1000_adapter *adapter,
 	}
 
 	for (f = 0; f < nr_frags; f++) {
-		struct skb_frag_struct *frag;
+		const struct skb_frag_struct *frag;
 
 		frag = &skb_shinfo(skb)->frags[f];
-		len = frag->size;
-		offset = frag->page_offset;
+		len = skb_frag_size(frag);
+		offset = 0;
 
 		while (len) {
+			unsigned long bufend;
 			i++;
 			if (unlikely(i == tx_ring->count))
 				i = 0;
@@ -2925,18 +2915,19 @@ static int e1000_tx_map(struct e1000_adapter *adapter,
 			/* Workaround for potential 82544 hang in PCI-X.
 			 * Avoid terminating buffers within evenly-aligned
 			 * dwords. */
+			bufend = (unsigned long)
+				page_to_phys(skb_frag_page(frag));
+			bufend += offset + size - 1;
 			if (unlikely(adapter->pcix_82544 &&
-			    !((unsigned long)(page_to_phys(frag->page) + offset
-			                      + size - 1) & 4) &&
-			    size > 4))
+				     !(bufend & 4) &&
+				     size > 4))
 				size -= 4;
 
 			buffer_info->length = size;
 			buffer_info->time_stamp = jiffies;
 			buffer_info->mapped_as_page = true;
-			buffer_info->dma = dma_map_page(&pdev->dev, frag->page,
-							offset,	size,
-							DMA_TO_DEVICE);
+			buffer_info->dma = skb_frag_dma_map(&pdev->dev, frag,
+						offset, size, DMA_TO_DEVICE);
 			if (dma_mapping_error(&pdev->dev, buffer_info->dma))
 				goto dma_error;
 			buffer_info->next_to_watch = i;
@@ -3192,7 +3183,7 @@ static netdev_tx_t e1000_xmit_frame(struct sk_buff *skb,
 
 	nr_frags = skb_shinfo(skb)->nr_frags;
 	for (f = 0; f < nr_frags; f++)
-		count += TXD_USE_COUNT(skb_shinfo(skb)->frags[f].size,
+		count += TXD_USE_COUNT(skb_frag_size(&skb_shinfo(skb)->frags[f]),
 				       max_txd_pwr);
 	if (adapter->pcix_82544)
 		count += nr_frags;
@@ -3202,14 +3193,12 @@ static netdev_tx_t e1000_xmit_frame(struct sk_buff *skb,
 	if (unlikely(e1000_maybe_stop_tx(netdev, tx_ring, count + 2)))
 		return NETDEV_TX_BUSY;
 
-	if (unlikely(hw->mac_type == e1000_82547)) {
-		if (unlikely(e1000_82547_fifo_workaround(adapter, skb))) {
-			netif_stop_queue(netdev);
-			if (!test_bit(__E1000_DOWN, &adapter->flags))
-				mod_timer(&adapter->tx_fifo_stall_timer,
-				          jiffies + 1);
-			return NETDEV_TX_BUSY;
-		}
+	if (unlikely((hw->mac_type == e1000_82547) &&
+		     (e1000_82547_fifo_workaround(adapter, skb)))) {
+		netif_stop_queue(netdev);
+		if (!test_bit(__E1000_DOWN, &adapter->flags))
+			schedule_delayed_work(&adapter->fifo_stall_task, 1);
+		return NETDEV_TX_BUSY;
 	}
 
 	if (vlan_tx_tag_present(skb)) {
@@ -3271,6 +3260,8 @@ static void e1000_reset_task(struct work_struct *work)
 	struct e1000_adapter *adapter =
 		container_of(work, struct e1000_adapter, reset_task);
 
+	if (test_bit(__E1000_DOWN, &adapter->flags))
+		return;
 	e1000_reinit_safe(adapter);
 }
 
@@ -3279,7 +3270,7 @@ static void e1000_reset_task(struct work_struct *work)
  * @netdev: network interface device structure
  *
  * Returns the address of the device statistics structure.
- * The statistics are actually updated from the timer callback.
+ * The statistics are actually updated from the watchdog.
  **/
 
 static struct net_device_stats *e1000_get_stats(struct net_device *netdev)
@@ -3547,7 +3538,7 @@ static irqreturn_t e1000_intr(int irq, void *data)
 		hw->get_link_status = 1;
 		/* guard against interrupt when we're going down */
 		if (!test_bit(__E1000_DOWN, &adapter->flags))
-			mod_timer(&adapter->watchdog_timer, jiffies + 1);
+			schedule_delayed_work(&adapter->watchdog_task, 1);
 	}
 
 	/* disable interrupts, without the synchronize_irq bit */
@@ -3746,7 +3737,7 @@ static void e1000_consume_page(struct e1000_buffer *bi, struct sk_buff *skb,
 	bi->page = NULL;
 	skb->len += length;
 	skb->data_len += length;
-	skb->truesize += length;
+	skb->truesize += PAGE_SIZE;
 }
 
 /**
@@ -4725,6 +4716,8 @@ static int __e1000_shutdown(struct pci_dev *pdev, bool *enable_wake)
 
 	netif_device_detach(netdev);
 
+	mutex_lock(&adapter->mutex);
+
 	if (netif_running(netdev)) {
 		WARN_ON(test_bit(__E1000_RESETTING, &adapter->flags));
 		e1000_down(adapter);
@@ -4732,8 +4725,10 @@ static int __e1000_shutdown(struct pci_dev *pdev, bool *enable_wake)
 
 #ifdef CONFIG_PM
 	retval = pci_save_state(pdev);
-	if (retval)
+	if (retval) {
+		mutex_unlock(&adapter->mutex);
 		return retval;
+	}
 #endif
 
 	status = er32(STATUS);
@@ -4787,6 +4782,8 @@ static int __e1000_shutdown(struct pci_dev *pdev, bool *enable_wake)
 
 	if (netif_running(netdev))
 		e1000_free_irq(adapter);
+
+	mutex_unlock(&adapter->mutex);
 
 	pci_disable_device(pdev);
 

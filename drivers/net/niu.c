@@ -17,6 +17,7 @@
 #include <linux/delay.h>
 #include <linux/bitops.h>
 #include <linux/mii.h>
+#include <linux/if.h>
 #include <linux/if_ether.h>
 #include <linux/if_vlan.h>
 #include <linux/ip.h>
@@ -3286,20 +3287,13 @@ static u16 tcam_get_valid_entry_cnt(struct niu *np)
 }
 
 static void niu_rx_skb_append(struct sk_buff *skb, struct page *page,
-			      u32 offset, u32 size)
+			      u32 offset, u32 size, u32 truesize)
 {
-	int i = skb_shinfo(skb)->nr_frags;
-	skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
-
-	frag->page = page;
-	frag->page_offset = offset;
-	frag->size = size;
+	skb_fill_page_desc(skb, skb_shinfo(skb)->nr_frags, page, offset, size);
 
 	skb->len += size;
 	skb->data_len += size;
-	skb->truesize += size;
-
-	skb_shinfo(skb)->nr_frags = i + 1;
+	skb->truesize += truesize;
 }
 
 static unsigned int niu_hash_rxaddr(struct rx_ring_info *rp, u64 a)
@@ -3482,7 +3476,7 @@ static int niu_process_rx_pkt(struct napi_struct *napi, struct niu *np,
 		} else if (!(val & RCR_ENTRY_MULTI))
 			append_size = len - skb->len;
 
-		niu_rx_skb_append(skb, page, off, append_size);
+		niu_rx_skb_append(skb, page, off, append_size, rcr_size);
 		if ((page->index + rp->rbr_block_size) - rcr_size == addr) {
 			*link = (struct page *) page->mapping;
 			np->ops->unmap_page(np->device, page->index,
@@ -3600,7 +3594,7 @@ static int release_tx_packet(struct niu *np, struct tx_ring_info *rp, int idx)
 		tb = &rp->tx_buffs[idx];
 		BUG_ON(tb->skb != NULL);
 		np->ops->unmap_page(np->device, tb->mapping,
-				    skb_shinfo(skb)->frags[i].size,
+				    skb_frag_size(&skb_shinfo(skb)->frags[i]),
 				    DMA_TO_DEVICE);
 		idx = NEXT_TX(rp, idx);
 	}
@@ -6733,10 +6727,10 @@ static netdev_tx_t niu_start_xmit(struct sk_buff *skb,
 	}
 
 	for (i = 0; i <  skb_shinfo(skb)->nr_frags; i++) {
-		skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
+		const skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
 
-		len = frag->size;
-		mapping = np->ops->map_page(np->device, frag->page,
+		len = skb_frag_size(frag);
+		mapping = np->ops->map_page(np->device, skb_frag_page(frag),
 					    frag->page_offset, len,
 					    DMA_TO_DEVICE);
 
@@ -7301,11 +7295,13 @@ static int niu_get_ethtool_tcam_all(struct niu *np,
 	}
 	niu_unlock_parent(np, flags);
 
+	nfc->rule_cnt = cnt;
+
 	return ret;
 }
 
 static int niu_get_nfc(struct net_device *dev, struct ethtool_rxnfc *cmd,
-		       void *rule_locs)
+		       u32 *rule_locs)
 {
 	struct niu *np = netdev_priv(dev);
 	int ret = 0;
@@ -7324,7 +7320,7 @@ static int niu_get_nfc(struct net_device *dev, struct ethtool_rxnfc *cmd,
 		ret = niu_get_ethtool_tcam_entry(np, cmd);
 		break;
 	case ETHTOOL_GRXCLSRLALL:
-		ret = niu_get_ethtool_tcam_all(np, cmd, (u32 *)rule_locs);
+		ret = niu_get_ethtool_tcam_all(np, cmd, rule_locs);
 		break;
 	default:
 		ret = -EINVAL;
@@ -9716,7 +9712,7 @@ static const struct net_device_ops niu_netdev_ops = {
 	.ndo_stop		= niu_close,
 	.ndo_start_xmit		= niu_start_xmit,
 	.ndo_get_stats64	= niu_get_stats,
-	.ndo_set_multicast_list	= niu_set_rx_mode,
+	.ndo_set_rx_mode	= niu_set_rx_mode,
 	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_set_mac_address	= niu_set_mac_addr,
 	.ndo_do_ioctl		= niu_ioctl,
@@ -9851,6 +9847,8 @@ static int __devinit niu_pci_init_one(struct pci_dev *pdev,
 	}
 
 	niu_set_basic_features(dev);
+
+	dev->priv_flags |= IFF_UNICAST_FLT;
 
 	np->regs = pci_ioremap_bar(pdev, 0);
 	if (!np->regs) {

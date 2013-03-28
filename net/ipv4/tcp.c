@@ -526,7 +526,7 @@ EXPORT_SYMBOL(tcp_ioctl);
 
 static inline void tcp_mark_push(struct tcp_sock *tp, struct sk_buff *skb)
 {
-	TCP_SKB_CB(skb)->flags |= TCPHDR_PSH;
+	TCP_SKB_CB(skb)->tcp_flags |= TCPHDR_PSH;
 	tp->pushed_seq = tp->write_seq;
 }
 
@@ -542,7 +542,7 @@ static inline void skb_entail(struct sock *sk, struct sk_buff *skb)
 
 	skb->csum    = 0;
 	tcb->seq     = tcb->end_seq = tp->write_seq;
-	tcb->flags   = TCPHDR_ACK;
+	tcb->tcp_flags = TCPHDR_ACK;
 	tcb->sacked  = 0;
 	skb_header_release(skb);
 	tcp_add_write_queue_tail(sk, skb);
@@ -817,7 +817,7 @@ new_segment:
 			goto wait_for_memory;
 
 		if (can_coalesce) {
-			skb_shinfo(skb)->frags[i - 1].size += copy;
+			skb_frag_size_add(&skb_shinfo(skb)->frags[i - 1], copy);
 		} else {
 			get_page(page);
 			skb_fill_page_desc(skb, i, page, offset, copy);
@@ -834,7 +834,7 @@ new_segment:
 		skb_shinfo(skb)->gso_segs = 0;
 
 		if (!copied)
-			TCP_SKB_CB(skb)->flags &= ~TCPHDR_PSH;
+			TCP_SKB_CB(skb)->tcp_flags &= ~TCPHDR_PSH;
 
 		copied += copy;
 		poffset += copy;
@@ -1061,8 +1061,7 @@ new_segment:
 
 				/* Update the skb. */
 				if (merge) {
-					skb_shinfo(skb)->frags[i - 1].size +=
-									copy;
+					skb_frag_size_add(&skb_shinfo(skb)->frags[i - 1], copy);
 				} else {
 					skb_fill_page_desc(skb, i, page, off, copy);
 					if (TCP_PAGE(sk)) {
@@ -1077,7 +1076,7 @@ new_segment:
 			}
 
 			if (!copied)
-				TCP_SKB_CB(skb)->flags &= ~TCPHDR_PSH;
+				TCP_SKB_CB(skb)->tcp_flags &= ~TCPHDR_PSH;
 
 			tp->write_seq += copy;
 			TCP_SKB_CB(skb)->end_seq += copy;
@@ -2478,8 +2477,10 @@ void tcp_get_info(struct sock *sk, struct tcp_info *info)
 		info->tcpi_rcv_wscale = tp->rx_opt.rcv_wscale;
 	}
 
-	if (tp->ecn_flags&TCP_ECN_OK)
+	if (tp->ecn_flags & TCP_ECN_OK)
 		info->tcpi_options |= TCPI_OPT_ECN;
+	if (tp->ecn_flags & TCP_ECN_SEEN)
+		info->tcpi_options |= TCPI_OPT_ECN_SEEN;
 
 	info->tcpi_rto = jiffies_to_usecs(icsk->icsk_rto);
 	info->tcpi_ato = jiffies_to_usecs(icsk->icsk_ack.ato);
@@ -3052,8 +3053,8 @@ int tcp_md5_hash_skb_data(struct tcp_md5sig_pool *hp,
 	for (i = 0; i < shi->nr_frags; ++i) {
 		const struct skb_frag_struct *f = &shi->frags[i];
 		struct page *page = skb_frag_page(f);
-		sg_set_page(&sg, page, f->size, f->page_offset);
-		if (crypto_hash_update(desc, &sg, f->size))
+		sg_set_page(&sg, page, skb_frag_size(f), f->page_offset);
+		if (crypto_hash_update(desc, &sg, skb_frag_size(f)))
 			return 1;
 	}
 

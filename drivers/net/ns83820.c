@@ -1160,13 +1160,12 @@ again:
 		if (!nr_frags)
 			break;
 
-		buf = pci_map_page(dev->pci_dev, frag->page,
-				   frag->page_offset,
-				   frag->size, PCI_DMA_TODEVICE);
+		buf = skb_frag_dma_map(&dev->pci_dev->dev, frag, 0,
+				       skb_frag_size(frag), DMA_TO_DEVICE);
 		dprintk("frag: buf=%08Lx  page=%08lx offset=%08lx\n",
 			(long long)buf, (long) page_to_pfn(frag->page),
 			frag->page_offset);
-		len = frag->size;
+		len = skb_frag_size(frag);
 		frag++;
 		nr_frags--;
 	}
@@ -1937,7 +1936,7 @@ static const struct net_device_ops netdev_ops = {
 	.ndo_start_xmit		= ns83820_hard_start_xmit,
 	.ndo_get_stats		= ns83820_get_stats,
 	.ndo_change_mtu		= ns83820_change_mtu,
-	.ndo_set_multicast_list = ns83820_set_multicast,
+	.ndo_set_rx_mode	= ns83820_set_multicast,
 	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_set_mac_address	= eth_mac_addr,
 	.ndo_tx_timeout		= ns83820_tx_timeout,

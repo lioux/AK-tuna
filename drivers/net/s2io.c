@@ -2350,12 +2350,12 @@ static struct sk_buff *s2io_txdl_getskb(struct fifo_info *fifo_data,
 	if (frg_cnt) {
 		txds++;
 		for (j = 0; j < frg_cnt; j++, txds++) {
-			skb_frag_t *frag = &skb_shinfo(skb)->frags[j];
+			const skb_frag_t *frag = &skb_shinfo(skb)->frags[j];
 			if (!txds->Buffer_Pointer)
 				break;
 			pci_unmap_page(nic->pdev,
 				       (dma_addr_t)txds->Buffer_Pointer,
-				       frag->size, PCI_DMA_TODEVICE);
+				       skb_frag_size(frag), PCI_DMA_TODEVICE);
 		}
 	}
 	memset(txdlp, 0, (sizeof(struct TxD) * fifo_data->max_txds));
@@ -4185,16 +4185,16 @@ static netdev_tx_t s2io_xmit(struct sk_buff *skb, struct net_device *dev)
 	frg_cnt = skb_shinfo(skb)->nr_frags;
 	/* For fragmented SKB. */
 	for (i = 0; i < frg_cnt; i++) {
-		skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
+		const skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
 		/* A '0' length fragment will be ignored */
-		if (!frag->size)
+		if (!skb_frag_size(frag))
 			continue;
 		txdp++;
-		txdp->Buffer_Pointer = (u64)pci_map_page(sp->pdev, frag->page,
-							 frag->page_offset,
-							 frag->size,
-							 PCI_DMA_TODEVICE);
-		txdp->Control_1 = TXD_BUFFER0_SIZE(frag->size);
+		txdp->Buffer_Pointer = (u64)skb_frag_dma_map(&sp->pdev->dev,
+							     frag, 0,
+							     skb_frag_size(frag),
+							     DMA_TO_DEVICE);
+		txdp->Control_1 = TXD_BUFFER0_SIZE(skb_frag_size(frag));
 		if (offload_type == SKB_GSO_UDP)
 			txdp->Control_1 |= TXD_UFO_EN;
 	}
@@ -5522,14 +5522,12 @@ static void s2io_ethtool_gringparam(struct net_device *dev,
 		ering->rx_jumbo_max_pending = MAX_RX_DESC_2;
 	}
 
-	ering->rx_mini_max_pending = 0;
 	ering->tx_max_pending = MAX_TX_DESC;
 
 	for (i = 0; i < sp->config.rx_ring_num; i++)
 		rx_desc_count += sp->config.rx_cfg[i].num_rxd;
 	ering->rx_pending = rx_desc_count;
 	ering->rx_jumbo_pending = rx_desc_count;
-	ering->rx_mini_pending = 0;
 
 	for (i = 0; i < sp->config.tx_fifo_num; i++)
 		tx_desc_count += sp->config.tx_cfg[i].fifo_len;
@@ -7682,7 +7680,7 @@ static const struct net_device_ops s2io_netdev_ops = {
 	.ndo_get_stats	        = s2io_get_stats,
 	.ndo_start_xmit    	= s2io_xmit,
 	.ndo_validate_addr	= eth_validate_addr,
-	.ndo_set_multicast_list = s2io_set_multicast,
+	.ndo_set_rx_mode	= s2io_set_multicast,
 	.ndo_do_ioctl	   	= s2io_ioctl,
 	.ndo_set_mac_address    = s2io_set_mac_addr,
 	.ndo_change_mtu	   	= s2io_change_mtu,

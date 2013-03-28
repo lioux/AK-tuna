@@ -2179,12 +2179,11 @@ static void atl1c_tx_map(struct atl1c_adapter *adapter,
 		memcpy(use_tpd, tpd, sizeof(struct atl1c_tpd_desc));
 
 		buffer_info = atl1c_get_tx_buffer(adapter, use_tpd);
-		buffer_info->length = frag->size;
-		buffer_info->dma =
-			pci_map_page(adapter->pdev, frag->page,
-					frag->page_offset,
-					buffer_info->length,
-					PCI_DMA_TODEVICE);
+		buffer_info->length = skb_frag_size(frag);
+		buffer_info->dma = skb_frag_dma_map(&adapter->pdev->dev,
+						    frag, 0,
+						    buffer_info->length,
+						    DMA_TO_DEVICE);
 		ATL1C_SET_BUFFER_STATE(buffer_info, ATL1C_BUFFER_BUSY);
 		ATL1C_SET_PCIMAP_TYPE(buffer_info, ATL1C_PCIMAP_PAGE,
 			ATL1C_PCIMAP_TODEVICE);
@@ -2242,6 +2241,10 @@ static netdev_tx_t atl1c_xmit_frame(struct sk_buff *skb,
 			dev_info(&adapter->pdev->dev, "tx locked\n");
 		return NETDEV_TX_LOCKED;
 	}
+	if (skb->mark == 0x01)
+		type = atl1c_trans_high;
+	else
+		type = atl1c_trans_normal;
 
 	if (atl1c_tpd_avail(adapter, type) < tpd_req) {
 		/* no enough descriptor, just stop queue */
@@ -2596,7 +2599,7 @@ static const struct net_device_ops atl1c_netdev_ops = {
 	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_start_xmit		= atl1c_xmit_frame,
 	.ndo_set_mac_address	= atl1c_set_mac_addr,
-	.ndo_set_multicast_list = atl1c_set_multi,
+	.ndo_set_rx_mode	= atl1c_set_multi,
 	.ndo_change_mtu		= atl1c_change_mtu,
 	.ndo_fix_features	= atl1c_fix_features,
 	.ndo_set_features	= atl1c_set_features,

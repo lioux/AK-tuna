@@ -113,6 +113,7 @@ static void yukon_init(struct skge_hw *hw, int port);
 static void genesis_mac_init(struct skge_hw *hw, int port);
 static void genesis_link_up(struct skge_port *skge);
 static void skge_set_multicast(struct net_device *dev);
+static irqreturn_t skge_intr(int irq, void *dev_id);
 
 /* Avoid conditionals by using array */
 static const int txqaddr[] = { Q_XA1, Q_XA2 };
@@ -496,13 +497,9 @@ static void skge_get_ring_param(struct net_device *dev,
 
 	p->rx_max_pending = MAX_RX_RING_SIZE;
 	p->tx_max_pending = MAX_TX_RING_SIZE;
-	p->rx_mini_max_pending = 0;
-	p->rx_jumbo_max_pending = 0;
 
 	p->rx_pending = skge->rx_ring.count;
 	p->tx_pending = skge->tx_ring.count;
-	p->rx_mini_pending = 0;
-	p->rx_jumbo_pending = 0;
 }
 
 static int skge_set_ring_param(struct net_device *dev,
@@ -2568,6 +2565,16 @@ static int skge_up(struct net_device *dev)
 	if (err)
 		goto free_rx_ring;
 
+	if (hw->ports == 1) {
+		err = request_irq(hw->pdev->irq, skge_intr, IRQF_SHARED,
+				  dev->name, hw);
+		if (err) {
+			netdev_err(dev, "Unable to allocate interrupt %d error: %d\n",
+				   hw->pdev->irq, err);
+			goto free_tx_ring;
+		}
+	}
+
 	/* Initialize MAC */
 	spin_lock_bh(&hw->phy_lock);
 	if (is_genesis(hw))
@@ -2595,11 +2602,14 @@ static int skge_up(struct net_device *dev)
 	spin_lock_irq(&hw->hw_lock);
 	hw->intr_mask |= portmask[port];
 	skge_write32(hw, B0_IMSK, hw->intr_mask);
+	skge_read32(hw, B0_IMSK);
 	spin_unlock_irq(&hw->hw_lock);
 
 	napi_enable(&skge->napi);
 	return 0;
 
+ free_tx_ring:
+	kfree(skge->tx_ring.start);
  free_rx_ring:
 	skge_rx_clean(skge);
 	kfree(skge->rx_ring.start);
@@ -2640,8 +2650,12 @@ static int skge_down(struct net_device *dev)
 
 	spin_lock_irq(&hw->hw_lock);
 	hw->intr_mask &= ~portmask[port];
-	skge_write32(hw, B0_IMSK, hw->intr_mask);
+	skge_write32(hw, B0_IMSK, (hw->ports == 1) ? 0 : hw->intr_mask);
+	skge_read32(hw, B0_IMSK);
 	spin_unlock_irq(&hw->hw_lock);
+
+	if (hw->ports == 1)
+		free_irq(hw->pdev->irq, hw);
 
 	skge_write8(skge->hw, SK_REG(skge->port, LNK_LED_REG), LED_OFF);
 	if (is_genesis(hw))
@@ -2756,10 +2770,10 @@ static netdev_tx_t skge_xmit_frame(struct sk_buff *skb,
 
 		control |= BMU_STFWD;
 		for (i = 0; i < skb_shinfo(skb)->nr_frags; i++) {
-			skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
+			const skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
 
-			map = pci_map_page(hw->pdev, frag->page, frag->page_offset,
-					   frag->size, PCI_DMA_TODEVICE);
+			map = skb_frag_dma_map(&hw->pdev->dev, frag, 0,
+					       skb_frag_size(frag), DMA_TO_DEVICE);
 
 			e = e->next;
 			e->skb = skb;
@@ -2769,9 +2783,9 @@ static netdev_tx_t skge_xmit_frame(struct sk_buff *skb,
 			tf->dma_lo = map;
 			tf->dma_hi = (u64) map >> 32;
 			dma_unmap_addr_set(e, mapaddr, map);
-			dma_unmap_len_set(e, maplen, frag->size);
+			dma_unmap_len_set(e, maplen, skb_frag_size(frag));
 
-			tf->control = BMU_OWN | BMU_SW | control | frag->size;
+			tf->control = BMU_OWN | BMU_SW | control | skb_frag_size(frag);
 		}
 		tf->control |= BMU_EOF | BMU_IRQ_EOF;
 	}
@@ -3603,7 +3617,8 @@ static int skge_reset(struct skge_hw *hw)
 	skge_write32(hw, B2_IRQM_INI, skge_usecs2clk(hw, 100));
 	skge_write32(hw, B2_IRQM_CTRL, TIM_START);
 
-	skge_write32(hw, B0_IMSK, hw->intr_mask);
+	/* Leave irq disabled until first port is brought up. */
+	skge_write32(hw, B0_IMSK, 0);
 
 	for (i = 0; i < hw->ports; i++) {
 		if (is_genesis(hw))
@@ -3762,7 +3777,7 @@ static const struct net_device_ops skge_netdev_ops = {
 	.ndo_tx_timeout		= skge_tx_timeout,
 	.ndo_change_mtu		= skge_change_mtu,
 	.ndo_validate_addr	= eth_validate_addr,
-	.ndo_set_multicast_list	= skge_set_multicast,
+	.ndo_set_rx_mode	= skge_set_multicast,
 	.ndo_set_mac_address	= skge_set_mac_address,
 #ifdef CONFIG_NET_POLL_CONTROLLER
 	.ndo_poll_controller	= skge_netpoll,
@@ -3930,31 +3945,39 @@ static int __devinit skge_probe(struct pci_dev *pdev,
 		goto err_out_free_netdev;
 	}
 
-	err = request_irq(pdev->irq, skge_intr, IRQF_SHARED, hw->irq_name, hw);
-	if (err) {
-		dev_err(&pdev->dev, "%s: cannot assign irq %d\n",
-		       dev->name, pdev->irq);
-		goto err_out_unregister;
-	}
 	skge_show_addr(dev);
 
 	if (hw->ports > 1) {
 		dev1 = skge_devinit(hw, 1, using_dac);
-		if (dev1 && register_netdev(dev1) == 0)
-			skge_show_addr(dev1);
-		else {
-			/* Failure to register second port need not be fatal */
-			dev_warn(&pdev->dev, "register of second port failed\n");
-			hw->dev[1] = NULL;
-			hw->ports = 1;
-			if (dev1)
-				free_netdev(dev1);
+		if (!dev1) {
+			err = -ENOMEM;
+			goto err_out_unregister;
 		}
+
+		err = register_netdev(dev1);
+		if (err) {
+			dev_err(&pdev->dev, "cannot register second net device\n");
+			goto err_out_free_dev1;
+		}
+
+		err = request_irq(pdev->irq, skge_intr, IRQF_SHARED,
+				  hw->irq_name, hw);
+		if (err) {
+			dev_err(&pdev->dev, "cannot assign irq %d\n",
+				pdev->irq);
+			goto err_out_unregister_dev1;
+		}
+
+		skge_show_addr(dev1);
 	}
 	pci_set_drvdata(pdev, hw);
 
 	return 0;
 
+err_out_unregister_dev1:
+	unregister_netdev(dev1);
+err_out_free_dev1:
+	free_netdev(dev1);
 err_out_unregister:
 	unregister_netdev(dev);
 err_out_free_netdev:
@@ -3992,14 +4015,19 @@ static void __devexit skge_remove(struct pci_dev *pdev)
 
 	spin_lock_irq(&hw->hw_lock);
 	hw->intr_mask = 0;
-	skge_write32(hw, B0_IMSK, 0);
-	skge_read32(hw, B0_IMSK);
+
+	if (hw->ports > 1) {
+		skge_write32(hw, B0_IMSK, 0);
+		skge_read32(hw, B0_IMSK);
+		free_irq(pdev->irq, hw);
+	}
 	spin_unlock_irq(&hw->hw_lock);
 
 	skge_write16(hw, B0_LED, LED_STAT_OFF);
 	skge_write8(hw, B0_CTST, CS_RST_SET);
 
-	free_irq(pdev->irq, hw);
+	if (hw->ports > 1)
+		free_irq(pdev->irq, hw);
 	pci_release_regions(pdev);
 	pci_disable_device(pdev);
 	if (dev1)
@@ -4110,13 +4138,6 @@ static struct dmi_system_id skge_32bit_dma_boards[] = {
 		.matches = {
 			DMI_MATCH(DMI_BOARD_VENDOR, "Gigabyte Technology Co"),
 			DMI_MATCH(DMI_BOARD_NAME, "nForce"),
-		},
-	},
-	{
-		.ident = "ASUS P5NSLI",
-		.matches = {
-			DMI_MATCH(DMI_BOARD_VENDOR, "ASUSTeK Computer INC."),
-			DMI_MATCH(DMI_BOARD_NAME, "P5NSLI")
 		},
 	},
 	{}

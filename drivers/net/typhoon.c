@@ -810,17 +810,16 @@ typhoon_start_tx(struct sk_buff *skb, struct net_device *dev)
 		txd->frag.addrHi = 0;
 		first_txd->numDesc++;
 
-		for(i = 0; i < skb_shinfo(skb)->nr_frags; i++) {
-			skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
+		for (i = 0; i < skb_shinfo(skb)->nr_frags; i++) {
+			const skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
 			void *frag_addr;
 
 			txd = (struct tx_desc *) (txRing->ringBase +
 						txRing->lastWrite);
 			typhoon_inc_tx_index(&txRing->lastWrite, 1);
 
-			len = frag->size;
-			frag_addr = (void *) page_address(frag->page) +
-						frag->page_offset;
+			len = skb_frag_size(frag);
+			frag_addr = skb_frag_address(frag);
 			skb_dma = pci_map_single(tp->tx_pdev, frag_addr, len,
 					 PCI_DMA_TODEVICE);
 			txd->flags = TYPHOON_FRAG_DESC | TYPHOON_DESC_VALID;
@@ -1149,13 +1148,9 @@ static void
 typhoon_get_ringparam(struct net_device *dev, struct ethtool_ringparam *ering)
 {
 	ering->rx_max_pending = RXENT_ENTRIES;
-	ering->rx_mini_max_pending = 0;
-	ering->rx_jumbo_max_pending = 0;
 	ering->tx_max_pending = TXLO_ENTRIES - 1;
 
 	ering->rx_pending = RXENT_ENTRIES;
-	ering->rx_mini_pending = 0;
-	ering->rx_jumbo_pending = 0;
 	ering->tx_pending = TXLO_ENTRIES - 1;
 }
 
@@ -2266,7 +2261,7 @@ static const struct net_device_ops typhoon_netdev_ops = {
 	.ndo_open		= typhoon_open,
 	.ndo_stop		= typhoon_close,
 	.ndo_start_xmit		= typhoon_start_tx,
-	.ndo_set_multicast_list	= typhoon_set_rx_mode,
+	.ndo_set_rx_mode	= typhoon_set_rx_mode,
 	.ndo_tx_timeout		= typhoon_tx_timeout,
 	.ndo_get_stats		= typhoon_get_stats,
 	.ndo_validate_addr	= eth_validate_addr,
