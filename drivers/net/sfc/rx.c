@@ -480,7 +480,7 @@ static void efx_rx_packet_gro(struct efx_channel *channel,
 		skb_shinfo(skb)->frags[0].page = page;
 		skb_shinfo(skb)->frags[0].page_offset =
 			efx_rx_buf_offset(efx, rx_buf);
-		skb_shinfo(skb)->frags[0].size = rx_buf->len;
+		skb_frag_size_set(&skb_shinfo(skb)->frags[0], rx_buf->len);
 		skb_shinfo(skb)->nr_frags = 1;
 
 		skb->len = rx_buf->len;

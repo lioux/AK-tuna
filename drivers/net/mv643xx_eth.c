@@ -713,8 +713,9 @@ static inline unsigned int has_tiny_unaligned_frags(struct sk_buff *skb)
 	int frag;
 
 	for (frag = 0; frag < skb_shinfo(skb)->nr_frags; frag++) {
-		skb_frag_t *fragp = &skb_shinfo(skb)->frags[frag];
-		if (fragp->size <= 8 && fragp->page_offset & 7)
+		const skb_frag_t *fragp = &skb_shinfo(skb)->frags[frag];
+
+		if (skb_frag_size(fragp) <= 8 && fragp->page_offset & 7)
 			return 1;
 	}
 
@@ -751,11 +752,11 @@ static void txq_submit_frag_skb(struct tx_queue *txq, struct sk_buff *skb)
 		}
 
 		desc->l4i_chk = 0;
-		desc->byte_cnt = this_frag->size;
-		desc->buf_ptr = dma_map_page(mp->dev->dev.parent,
-					     this_frag->page,
-					     this_frag->page_offset,
-					     this_frag->size, DMA_TO_DEVICE);
+		desc->byte_cnt = skb_frag_size(this_frag);
+		desc->buf_ptr = skb_frag_dma_map(mp->dev->dev.parent,
+						 this_frag, 0,
+						 skb_frag_size(this_frag),
+						 DMA_TO_DEVICE);
 	}
 }
 
@@ -1547,13 +1548,9 @@ mv643xx_eth_get_ringparam(struct net_device *dev, struct ethtool_ringparam *er)
 
 	er->rx_max_pending = 4096;
 	er->tx_max_pending = 4096;
-	er->rx_mini_max_pending = 0;
-	er->rx_jumbo_max_pending = 0;
 
 	er->rx_pending = mp->rx_ring_size;
 	er->tx_pending = mp->tx_ring_size;
-	er->rx_mini_pending = 0;
-	er->rx_jumbo_pending = 0;
 }
 
 static int
@@ -2597,7 +2594,7 @@ static int mv643xx_eth_shared_probe(struct platform_device *pdev)
 	if (msp == NULL)
 		goto out;
 
-	msp->base = ioremap(res->start, res->end - res->start + 1);
+	msp->base = ioremap(res->start, resource_size(res));
 	if (msp->base == NULL)
 		goto out_free;
 
@@ -2922,6 +2919,8 @@ static int mv643xx_eth_probe(struct platform_device *pdev)
 		NETIF_F_RXCSUM | NETIF_F_LRO;
 	dev->features = NETIF_F_SG | NETIF_F_IP_CSUM | NETIF_F_RXCSUM;
 	dev->vlan_features = NETIF_F_SG | NETIF_F_IP_CSUM;
+
+	dev->priv_flags |= IFF_UNICAST_FLT;
 
 	SET_NETDEV_DEV(dev, &pdev->dev);
 

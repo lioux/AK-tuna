@@ -300,9 +300,9 @@ static int pasemi_mac_unmap_tx_skb(struct pasemi_mac *mac,
 	pci_unmap_single(pdev, dmas[0], skb_headlen(skb), PCI_DMA_TODEVICE);
 
 	for (f = 0; f < nfrags; f++) {
-		skb_frag_t *frag = &skb_shinfo(skb)->frags[f];
+		const skb_frag_t *frag = &skb_shinfo(skb)->frags[f];
 
-		pci_unmap_page(pdev, dmas[f+1], frag->size, PCI_DMA_TODEVICE);
+		pci_unmap_page(pdev, dmas[f+1], skb_frag_size(frag), PCI_DMA_TODEVICE);
 	}
 	dev_kfree_skb_irq(skb);
 
@@ -1505,11 +1505,10 @@ static int pasemi_mac_start_tx(struct sk_buff *skb, struct net_device *dev)
 	for (i = 0; i < nfrags; i++) {
 		skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
 
-		map[i+1] = pci_map_page(mac->dma_pdev, frag->page,
-					frag->page_offset, frag->size,
-					PCI_DMA_TODEVICE);
+		map[i + 1] = skb_frag_dma_map(&mac->dma_pdev->dev, frag, 0,
+					      frag->size, DMA_TO_DEVICE);
 		map_size[i+1] = frag->size;
-		if (pci_dma_mapping_error(mac->dma_pdev, map[i+1])) {
+		if (dma_mapping_error(&mac->dma_pdev->dev, map[i + 1])) {
 			nfrags = i;
 			goto out_err_nolock;
 		}
@@ -1719,7 +1718,7 @@ static const struct net_device_ops pasemi_netdev_ops = {
 	.ndo_open		= pasemi_mac_open,
 	.ndo_stop		= pasemi_mac_close,
 	.ndo_start_xmit		= pasemi_mac_start_tx,
-	.ndo_set_multicast_list	= pasemi_mac_set_rx_mode,
+	.ndo_set_rx_mode	= pasemi_mac_set_rx_mode,
 	.ndo_set_mac_address	= pasemi_mac_set_mac_addr,
 	.ndo_change_mtu		= pasemi_mac_change_mtu,
 	.ndo_validate_addr	= eth_validate_addr,

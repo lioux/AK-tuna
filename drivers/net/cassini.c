@@ -2048,10 +2048,10 @@ static int cas_rx_process_pkt(struct cas *cp, struct cas_rx_comp *rxc,
 		skb->truesize += hlen - swivel;
 		skb->len      += hlen - swivel;
 
-		get_page(page->buffer);
-		frag->page = page->buffer;
+		__skb_frag_set_page(frag, page->buffer);
+		__skb_frag_ref(frag);
 		frag->page_offset = off;
-		frag->size = hlen - swivel;
+		skb_frag_size_set(frag, hlen - swivel);
 
 		/* any more data? */
 		if ((words[0] & RX_COMP1_SPLIT_PKT) && ((dlen -= hlen) > 0)) {
@@ -2072,10 +2072,10 @@ static int cas_rx_process_pkt(struct cas *cp, struct cas_rx_comp *rxc,
 			skb->len      += hlen;
 			frag++;
 
-			get_page(page->buffer);
-			frag->page = page->buffer;
+			__skb_frag_set_page(frag, page->buffer);
+			__skb_frag_ref(frag);
 			frag->page_offset = 0;
-			frag->size = hlen;
+			skb_frag_size_set(frag, hlen);
 			RX_USED_ADD(page, hlen + cp->crc_size);
 		}
 
@@ -2452,14 +2452,13 @@ static irqreturn_t cas_interruptN(int irq, void *dev_id)
 	struct net_device *dev = dev_id;
 	struct cas *cp = netdev_priv(dev);
 	unsigned long flags;
-	int ring;
+	int ring = (irq == cp->pci_irq_INTC) ? 2 : 3;
 	u32 status = readl(cp->regs + REG_PLUS_INTRN_STATUS(ring));
 
 	/* check for shared irq */
 	if (status == 0)
 		return IRQ_NONE;
 
-	ring = (irq == cp->pci_irq_INTC) ? 2 : 3;
 	spin_lock_irqsave(&cp->lock, flags);
 	if (status & INTR_RX_DONE_ALT) { /* handle rx separately */
 #ifdef USE_NAPI
@@ -2827,12 +2826,11 @@ static inline int cas_xmit_tx_ringN(struct cas *cp, int ring,
 	entry = TX_DESC_NEXT(ring, entry);
 
 	for (frag = 0; frag < nr_frags; frag++) {
-		skb_frag_t *fragp = &skb_shinfo(skb)->frags[frag];
+		const skb_frag_t *fragp = &skb_shinfo(skb)->frags[frag];
 
-		len = fragp->size;
-		mapping = pci_map_page(cp->pdev, fragp->page,
-				       fragp->page_offset, len,
-				       PCI_DMA_TODEVICE);
+		len = skb_frag_size(fragp);
+		mapping = skb_frag_dma_map(&cp->pdev->dev, fragp, 0, len,
+					   DMA_TO_DEVICE);
 
 		tabort = cas_calc_tabort(cp, fragp->page_offset, len);
 		if (unlikely(tabort)) {
@@ -2843,7 +2841,7 @@ static inline int cas_xmit_tx_ringN(struct cas *cp, int ring,
 				      ctrl, 0);
 			entry = TX_DESC_NEXT(ring, entry);
 
-			addr = cas_page_map(fragp->page);
+			addr = cas_page_map(skb_frag_page(fragp));
 			memcpy(tx_tiny_buf(cp, ring, entry),
 			       addr + fragp->page_offset + len - tabort,
 			       tabort);
@@ -4910,7 +4908,7 @@ static const struct net_device_ops cas_netdev_ops = {
 	.ndo_stop		= cas_close,
 	.ndo_start_xmit		= cas_start_xmit,
 	.ndo_get_stats 		= cas_get_stats,
-	.ndo_set_multicast_list = cas_set_multicast,
+	.ndo_set_rx_mode	= cas_set_multicast,
 	.ndo_do_ioctl		= cas_ioctl,
 	.ndo_tx_timeout		= cas_tx_timeout,
 	.ndo_change_mtu		= cas_change_mtu,

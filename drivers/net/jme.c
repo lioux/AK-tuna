@@ -1920,7 +1920,7 @@ jme_map_tx_skb(struct jme_adapter *jme, struct sk_buff *skb, int idx)
 	u8 hidma = jme->dev->features & NETIF_F_HIGHDMA;
 	int i, nr_frags = skb_shinfo(skb)->nr_frags;
 	int mask = jme->tx_ring_mask;
-	struct skb_frag_struct *frag;
+	const struct skb_frag_struct *frag;
 	u32 len;
 
 	for (i = 0 ; i < nr_frags ; ++i) {
@@ -1928,8 +1928,9 @@ jme_map_tx_skb(struct jme_adapter *jme, struct sk_buff *skb, int idx)
 		ctxdesc = txdesc + ((idx + i + 2) & (mask));
 		ctxbi = txbi + ((idx + i + 2) & (mask));
 
-		jme_fill_tx_map(jme->pdev, ctxdesc, ctxbi, frag->page,
-				 frag->page_offset, frag->size, hidma);
+		jme_fill_tx_map(jme->pdev, ctxdesc, ctxbi,
+				skb_frag_page(frag),
+				frag->page_offset, skb_frag_size(frag), hidma);
 	}
 
 	len = skb_is_nonlinear(skb) ? skb_headlen(skb) : skb->len;
@@ -2220,11 +2221,19 @@ jme_change_mtu(struct net_device *netdev, int new_mtu)
 		((new_mtu) < IPV6_MIN_MTU))
 		return -EINVAL;
 
+	if (new_mtu > 4000) {
+		jme->reg_rxcs &= ~RXCS_FIFOTHNP;
+		jme->reg_rxcs |= RXCS_FIFOTHNP_64QW;
+		jme_restart_rx_engine(jme);
+	} else {
+		jme->reg_rxcs &= ~RXCS_FIFOTHNP;
+		jme->reg_rxcs |= RXCS_FIFOTHNP_128QW;
+		jme_restart_rx_engine(jme);
+	}
 
 	netdev->mtu = new_mtu;
 	netdev_update_features(netdev);
 
-	jme_restart_rx_engine(jme);
 	jme_reset_link(jme);
 
 	return 0;
@@ -2831,7 +2840,7 @@ static const struct net_device_ops jme_netdev_ops = {
 	.ndo_do_ioctl		= jme_ioctl,
 	.ndo_start_xmit		= jme_start_xmit,
 	.ndo_set_mac_address	= jme_set_macaddr,
-	.ndo_set_multicast_list	= jme_set_multi,
+	.ndo_set_rx_mode	= jme_set_multi,
 	.ndo_change_mtu		= jme_change_mtu,
 	.ndo_tx_timeout		= jme_tx_timeout,
 	.ndo_fix_features       = jme_fix_features,

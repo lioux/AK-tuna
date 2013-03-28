@@ -59,7 +59,7 @@
 #include <asm/pmac_feature.h>
 #endif
 
-#include "sungem_phy.h"
+#include <linux/sungem_phy.h>
 #include "sungem.h"
 
 /* Stripping FCS is causing problems, disabled for now */
@@ -1065,16 +1065,14 @@ static netdev_tx_t gem_start_xmit(struct sk_buff *skb,
 		entry = NEXT_TX(entry);
 
 		for (frag = 0; frag < skb_shinfo(skb)->nr_frags; frag++) {
-			skb_frag_t *this_frag = &skb_shinfo(skb)->frags[frag];
+			const skb_frag_t *this_frag = &skb_shinfo(skb)->frags[frag];
 			u32 len;
 			dma_addr_t mapping;
 			u64 this_ctrl;
 
-			len = this_frag->size;
-			mapping = pci_map_page(gp->pdev,
-					       this_frag->page,
-					       this_frag->page_offset,
-					       len, PCI_DMA_TODEVICE);
+			len = skb_frag_size(this_frag);
+			mapping = skb_frag_dma_map(&gp->pdev->dev, this_frag,
+						   0, len, DMA_TO_DEVICE);
 			this_ctrl = ctrl;
 			if (frag == skb_shinfo(skb)->nr_frags - 1)
 				this_ctrl |= TXDCTRL_EOF;
@@ -1721,7 +1719,7 @@ static void gem_init_phy(struct gem *gp)
 	if (gp->phy_type == phy_mii_mdio0 ||
 	    gp->phy_type == phy_mii_mdio1) {
 		/* Reset and detect MII PHY */
-		mii_phy_probe(&gp->phy_mii, gp->mii_phy_addr);
+		sungem_phy_probe(&gp->phy_mii, gp->mii_phy_addr);
 
 		/* Init PHY */
 		if (gp->phy_mii.def && gp->phy_mii.def->ops->init)
@@ -2820,7 +2818,7 @@ static const struct net_device_ops gem_netdev_ops = {
 	.ndo_stop		= gem_close,
 	.ndo_start_xmit		= gem_start_xmit,
 	.ndo_get_stats		= gem_get_stats,
-	.ndo_set_multicast_list = gem_set_multicast,
+	.ndo_set_rx_mode	= gem_set_multicast,
 	.ndo_do_ioctl		= gem_ioctl,
 	.ndo_tx_timeout		= gem_tx_timeout,
 	.ndo_change_mtu		= gem_change_mtu,

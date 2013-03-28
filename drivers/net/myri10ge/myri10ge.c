@@ -1216,7 +1216,7 @@ myri10ge_rx_skb_build(struct sk_buff *skb, u8 * va,
 	skb_frags = skb_shinfo(skb)->frags;
 	while (len > 0) {
 		memcpy(skb_frags, rx_frags, sizeof(*skb_frags));
-		len -= rx_frags->size;
+		len -= skb_frag_size(rx_frags);
 		skb_frags++;
 		rx_frags++;
 		skb_shinfo(skb)->nr_frags++;
@@ -1228,7 +1228,7 @@ myri10ge_rx_skb_build(struct sk_buff *skb, u8 * va,
 	 * manually */
 	skb_copy_to_linear_data(skb, va, hlen);
 	skb_shinfo(skb)->frags[0].page_offset += hlen;
-	skb_shinfo(skb)->frags[0].size -= hlen;
+	skb_frag_size_sub(&skb_shinfo(skb)->frags[0], hlen);
 	skb->data_len -= hlen;
 	skb->tail += hlen;
 	skb_pull(skb, MXGEFW_PAD);
@@ -1342,12 +1342,12 @@ myri10ge_rx_done(struct myri10ge_slice_state *ss, int len, __wsum csum,
 	/* Fill skb_frag_struct(s) with data from our receive */
 	for (i = 0, remainder = len; remainder > 0; i++) {
 		myri10ge_unmap_rx_page(pdev, &rx->info[idx], bytes);
-		rx_frags[i].page = rx->info[idx].page;
+		__skb_frag_set_page(&rx_frags[i], rx->info[idx].page);
 		rx_frags[i].page_offset = rx->info[idx].page_offset;
 		if (remainder < MYRI10GE_ALLOC_SIZE)
-			rx_frags[i].size = remainder;
+			skb_frag_size_set(&rx_frags[i], remainder);
 		else
-			rx_frags[i].size = MYRI10GE_ALLOC_SIZE;
+			skb_frag_size_set(&rx_frags[i], MYRI10GE_ALLOC_SIZE);
 		rx->cnt++;
 		idx = rx->cnt & rx->mask;
 		remainder -= MYRI10GE_ALLOC_SIZE;
@@ -1355,7 +1355,7 @@ myri10ge_rx_done(struct myri10ge_slice_state *ss, int len, __wsum csum,
 
 	if (lro_enabled) {
 		rx_frags[0].page_offset += MXGEFW_PAD;
-		rx_frags[0].size -= MXGEFW_PAD;
+		skb_frag_size_sub(&rx_frags[0], MXGEFW_PAD);
 		len -= MXGEFW_PAD;
 		lro_receive_frags(&ss->rx_done.lro_mgr, rx_frags,
 				  /* opaque, will come back in get_frag_header */
@@ -1375,15 +1375,15 @@ myri10ge_rx_done(struct myri10ge_slice_state *ss, int len, __wsum csum,
 		ss->stats.rx_dropped++;
 		do {
 			i--;
-			put_page(rx_frags[i].page);
+			__skb_frag_unref(&rx_frags[i]);
 		} while (i != 0);
 		return 0;
 	}
 
 	/* Attach the pages to the skb, and trim off any padding */
 	myri10ge_rx_skb_build(skb, va, rx_frags, len, hlen);
-	if (skb_shinfo(skb)->frags[0].size <= 0) {
-		put_page(skb_shinfo(skb)->frags[0].page);
+	if (skb_frag_size(&skb_shinfo(skb)->frags[0]) <= 0) {
+		skb_frag_unref(skb, 0);
 		skb_shinfo(skb)->nr_frags = 0;
 	}
 	skb->protocol = eth_type_trans(skb, dev);
@@ -2284,7 +2284,7 @@ myri10ge_get_frag_header(struct skb_frag_struct *frag, void **mac_hdr,
 	struct ethhdr *eh;
 	struct vlan_ethhdr *veh;
 	struct iphdr *iph;
-	u8 *va = page_address(frag->page) + frag->page_offset;
+	u8 *va = skb_frag_address(frag);
 	unsigned long ll_hlen;
 	/* passed opaque through lro_receive_frags() */
 	__wsum csum = (__force __wsum) (unsigned long)priv;
@@ -2926,9 +2926,9 @@ again:
 		idx = (count + tx->req) & tx->mask;
 		frag = &skb_shinfo(skb)->frags[frag_idx];
 		frag_idx++;
-		len = frag->size;
-		bus = pci_map_page(mgp->pdev, frag->page, frag->page_offset,
-				   len, PCI_DMA_TODEVICE);
+		len = skb_frag_size(frag);
+		bus = skb_frag_dma_map(&mgp->pdev->dev, frag, 0, len,
+				       DMA_TO_DEVICE);
 		dma_unmap_addr_set(&tx->info[idx], bus, bus);
 		dma_unmap_len_set(&tx->info[idx], len, len);
 	}
@@ -3892,7 +3892,7 @@ static const struct net_device_ops myri10ge_netdev_ops = {
 	.ndo_validate_addr	= eth_validate_addr,
 	.ndo_change_mtu		= myri10ge_change_mtu,
 	.ndo_fix_features	= myri10ge_fix_features,
-	.ndo_set_multicast_list = myri10ge_set_multicast_list,
+	.ndo_set_rx_mode	= myri10ge_set_multicast_list,
 	.ndo_set_mac_address	= myri10ge_set_mac_address,
 };
 
