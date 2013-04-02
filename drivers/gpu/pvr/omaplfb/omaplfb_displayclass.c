@@ -1018,6 +1018,7 @@ static IMG_BOOL ProcessFlip(IMG_HANDLE  hCmdCookie,
 
 	psDevInfo = (OMAPLFB_DEVINFO*)psFlipCmd->hExtDevice;
 
+#if defined(CONFIG_DSSCOMP)
 	if(psFlipCmd->hExtBuffer)
 	{
 		return ProcessFlipV1(hCmdCookie,
@@ -1028,7 +1029,6 @@ static IMG_BOOL ProcessFlip(IMG_HANDLE  hCmdCookie,
 	}
 	else
 	{
-#if defined(CONFIG_DSSCOMP)
 		DISPLAYCLASS_FLIP_COMMAND2 *psFlipCmd2;
 		psFlipCmd2 = (DISPLAYCLASS_FLIP_COMMAND2 *)pvData;
 		return ProcessFlipV2(hCmdCookie,
@@ -1037,10 +1037,10 @@ static IMG_BOOL ProcessFlip(IMG_HANDLE  hCmdCookie,
 							 psFlipCmd2->ui32NumMemInfos,
 							 psFlipCmd2->pvPrivData,
 							 psFlipCmd2->ui32PrivDataLength);
-#else
-		BUG();
-#endif
 	}
+#else
+	printk("%s: bad!!!\n", __func__);
+#endif
 }
 
 static OMAPLFB_ERROR OMAPLFBInitFBDev(OMAPLFB_DEVINFO *psDevInfo)
