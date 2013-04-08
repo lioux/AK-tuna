@@ -516,18 +516,6 @@ struct freq_attr omap_cpufreq_attr_screen_on_freq = {
 	.store = store_screen_on_freq,
 };
 
-static ssize_t show_gpu_clock(struct cpufreq_policy *policy, char *buf) {
-	struct clk *clk = clk_get(NULL, "dpll_per_m7x2_ck");
-	return sprintf(buf, "%lu Mhz\n", clk->rate/1000000);
-}
-
-static struct freq_attr gpu_clock = {
-    .attr = {.name = "gpu_clock",
-	     .mode=0644,
-    },
-    .show = show_gpu_clock,
-};
-
 #ifdef CONFIG_CUSTOM_VOLTAGE
 static ssize_t show_UV_mV_table(struct cpufreq_policy * policy, char * buf)
 {
