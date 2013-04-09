@@ -135,7 +135,6 @@ sio_choose_expired_request(struct sio_data *sd)
 	if (rq)
 		return rq;
 
-
 	return NULL;
 }
 
@@ -166,7 +165,6 @@ sio_choose_request(struct sio_data *sd, int data_dir)
 static inline void
 sio_dispatch_request(struct sio_data *sd, struct request *rq)
 {
-
 	/*
 	 * Remove the request from the fifo list
 	 * and dispatch it.
@@ -362,7 +360,6 @@ static struct elevator_type iosched_sio = {
 		.elevator_merge_req_fn		= sio_merged_requests,
 		.elevator_dispatch_fn		= sio_dispatch_requests,
 		.elevator_add_req_fn		= sio_add_request,
-		.elevator_queue_empty_fn	= sio_queue_empty,
 		.elevator_former_req_fn		= sio_former_request,
 		.elevator_latter_req_fn		= sio_latter_request,
 		.elevator_init_fn		= sio_init_queue,
@@ -377,9 +374,7 @@ static struct elevator_type iosched_sio = {
 static int __init sio_init(void)
 {
 	/* Register elevator */
-	elv_register(&iosched_sio);
-
-	return 0;
+	return elv_register(&iosched_sio);
 }
 
 static void __exit sio_exit(void)
