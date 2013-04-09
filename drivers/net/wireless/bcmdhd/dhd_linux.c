@@ -529,9 +529,6 @@ static void dhd_dump_htsfhisto(histo_t *his, char *s);
 int dhd_monitor_init(void *dhd_pub);
 int dhd_monitor_uninit(void);
 
-
-
-
 #if defined(WL_WIRELESS_EXT)
 struct iw_statistics *dhd_get_wireless_stats(struct net_device *dev);
 #endif /* defined(WL_WIRELESS_EXT) */
@@ -693,6 +690,12 @@ void dhd_enable_packet_filter(int value, dhd_pub_t *dhd)
 #endif /* PKT_FILTER_SUPPORT */
 }
 
+#ifdef CONFIG_BCMDHD_WIFI_PM
+static int wifi_pm = 0;
+
+module_param(wifi_pm, int, 0755);
+#endif
+
 static int dhd_set_suspend(int value, dhd_pub_t *dhd)
 {
 #ifndef SUPPORT_PM2_ONLY
@@ -712,6 +715,12 @@ static int dhd_set_suspend(int value, dhd_pub_t *dhd)
 		__FUNCTION__, value, dhd->in_suspend));
 
 	dhd_suspend_lock(dhd);
+
+#ifdef CONFIG_BCMDHD_WIFI_PM
+       if (wifi_pm == 1)
+           power_mode = PM_FAST;
+#endif
+
 	if (dhd->up) {
 		if (value && dhd->in_suspend) {
 #ifdef PKT_FILTER_SUPPORT
