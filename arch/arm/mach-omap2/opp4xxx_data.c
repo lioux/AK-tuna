@@ -228,44 +228,6 @@ struct omap_volt_data omap446x_vdd_core_volt_data[] = {
 	VOLT_DATA_DEFINE(0, 0, 0, 0, 0, 0),
 };
 
-/* OMAP 4460 MPU Core VDD dependency table */
-static struct omap_vdd_dep_volt omap446x_vdd_mpu_core_dep_data[] = {
-	{.main_vdd_volt = OMAP4460_VDD_MPU_OPP15_UV, .dep_vdd_volt = OMAP4460_VDD_CORE_OPP50_UV},
-	{.main_vdd_volt = OMAP4460_VDD_MPU_OPP25_UV, .dep_vdd_volt = OMAP4460_VDD_CORE_OPP50_UV},
-	{.main_vdd_volt = OMAP4460_VDD_MPU_OPP50_UV, .dep_vdd_volt = OMAP4460_VDD_CORE_OPP50_UV},
-	{.main_vdd_volt = OMAP4460_VDD_MPU_OPP75_UV, .dep_vdd_volt = OMAP4460_VDD_CORE_OPP50_UV},
-	{.main_vdd_volt = OMAP4460_VDD_MPU_OPP100_UV, .dep_vdd_volt = OMAP4460_VDD_CORE_OPP100_UV},
-	{.main_vdd_volt = OMAP4460_VDD_MPU_OPP125_UV, .dep_vdd_volt = OMAP4460_VDD_CORE_OPP100_UV},
-	{.main_vdd_volt = OMAP4460_VDD_MPU_OPPTURBO_UV, .dep_vdd_volt = OMAP4460_VDD_CORE_OPP100_UV},
-	{.main_vdd_volt = OMAP4460_VDD_MPU_OPPTURBOPLUS_UV, .dep_vdd_volt = OMAP4460_VDD_CORE_OPP100_UV},
-	{.main_vdd_volt = OMAP4460_VDD_MPU_OPPNITRO_UV, .dep_vdd_volt = OMAP4460_VDD_CORE_OPP100_UV},
-	{.main_vdd_volt = OMAP4460_VDD_MPU_OPPNITROPLUS_UV, .dep_vdd_volt = OMAP4460_VDD_CORE_OPP100_UV},
-};
-
-struct omap_vdd_dep_info omap446x_vddmpu_dep_info[] = {
-	{
-		.name	= "core",
-		.dep_table = omap446x_vdd_mpu_core_dep_data,
-		.nr_dep_entries = ARRAY_SIZE(omap446x_vdd_mpu_core_dep_data),
-	},
-	{.name = NULL, .dep_table = NULL, .nr_dep_entries = 0},
-};
-
-/* OMAP 4460 MPU IVA VDD dependency table */
-static struct omap_vdd_dep_volt omap446x_vdd_iva_core_dep_data[] = {
-	{.main_vdd_volt = OMAP4460_VDD_IVA_OPP50_UV, .dep_vdd_volt = OMAP4460_VDD_CORE_OPP50_UV},
-	{.main_vdd_volt = OMAP4460_VDD_IVA_OPP100_UV, .dep_vdd_volt = OMAP4460_VDD_CORE_OPP100_UV},
-	{.main_vdd_volt = OMAP4460_VDD_IVA_OPPTURBO_UV, .dep_vdd_volt = OMAP4460_VDD_CORE_OPP100_UV},
-};
-
-struct omap_vdd_dep_info omap446x_vddiva_dep_info[] = {
-	{
-		.name	= "core",
-		.dep_table = omap446x_vdd_iva_core_dep_data,
-		.nr_dep_entries = ARRAY_SIZE(omap446x_vdd_iva_core_dep_data),
-	},
-	{.name = NULL, .dep_table = NULL, .nr_dep_entries = 0},
-};
 
 static struct omap_opp_def __initdata omap446x_opp_def_list[] = {
 	/* MPU OPP1 - OPP25 */
