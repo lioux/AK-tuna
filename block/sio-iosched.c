@@ -18,19 +18,19 @@
 #include <linux/bio.h>
 #include <linux/module.h>
 #include <linux/init.h>
-#include <linux/version.h>
+#include <linux/slab.h>
 
 enum { ASYNC, SYNC };
 
 /* Tunables */
-static const int sync_read_expire  = HZ / 4;	/* max time before a sync read is submitted. */
-static const int sync_write_expire = 2 * HZ;	/* max time before a sync write is submitted. */
+static const int sync_read_expire  = 1000;	/* max time before a sync read is submitted. */
+static const int sync_write_expire = 5000;	/* max time before a sync write is submitted. */
 
-static const int async_read_expire  =  2 * HZ;	/* ditto for async, these limits are SOFT! */
-static const int async_write_expire = 8 * HZ;	/* ditto for async, these limits are SOFT! */
+static const int async_read_expire  =  4 * HZ;	/* ditto for async, these limits are SOFT! */
+static const int async_write_expire = 16 * HZ;	/* ditto for async, these limits are SOFT! */
 
-static const int writes_starved = 2;		/* max times reads can starve a write */
-static const int fifo_batch     = 8;		/* # of sequential requests treated as one
+static const int writes_starved = 1;		/* max times reads can starve a write */
+static const int fifo_batch     = 1;		/* # of sequential requests treated as one
 						   by the above parameters. For throughput. */
 
 /* Elevator data */
@@ -80,6 +80,16 @@ sio_add_request(struct request_queue *q, struct request *rq)
 	 */
 	rq_set_fifo_time(rq, jiffies + sd->fifo_expire[sync][data_dir]);
 	list_add_tail(&rq->queuelist, &sd->fifo_list[sync][data_dir]);
+}
+
+static int
+sio_queue_empty(struct request_queue *q)
+{
+	struct sio_data *sd = q->elevator->elevator_data;
+
+	/* Check if fifo lists are empty */
+	return list_empty(&sd->fifo_list[SYNC][READ]) && list_empty(&sd->fifo_list[SYNC][WRITE]) &&
+	       list_empty(&sd->fifo_list[ASYNC][READ]) && list_empty(&sd->fifo_list[ASYNC][WRITE]);
 }
 
 static struct request *
@@ -364,9 +374,7 @@ static struct elevator_type iosched_sio = {
 static int __init sio_init(void)
 {
 	/* Register elevator */
-	elv_register(&iosched_sio);
-
-	return 0;
+	return elv_register(&iosched_sio);
 }
 
 static void __exit sio_exit(void)
